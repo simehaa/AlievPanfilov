@@ -1,3 +1,10 @@
+# Custom
+*.sbatch
+*./slurm
+main
+main.o
+*.gp
+
 # Prerequisites
 *.d
 
