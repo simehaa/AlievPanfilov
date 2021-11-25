@@ -27,14 +27,21 @@ namespace utils {
     // Command line arguments (with default values)
     unsigned num_ipus;
     unsigned num_iterations;
-    float alpha;
+    float my1;
+    float my2;
+    float delta;
+    float epsilon;
+    float a;
+    float b;
+    float k;
+    float dx;
+    float dt;
     std::size_t height;
     std::size_t width;
     std::size_t depth;
     std::string vertex;
     bool cpu;
     // Not command line arguments
-    std::size_t side;
     std::size_t tiles_per_ipu = 0;
     std::size_t num_tiles_available = 0;
     std::vector<std::size_t> splits = {0,0,0};
@@ -75,14 +82,49 @@ namespace utils {
       "Depth of a custom 3D grid"
     )
     (
-      "alpha",
-      po::value<float>(&options.alpha)->default_value(0.1),
-      "PDE: update step size given as a float."
+      "my1",
+      po::value<float>(&options.my1)->default_value(0.07),
+      "A constant in the forward Euler Aliev-Panfilov equations."
     )
     (
-      "vertex",
-      po::value<std::string>(&options.vertex)->default_value("HeatEquationOptimized"),
-      "Name of vertex (from codelets.cpp) to use for the computation."
+      "my2",
+      po::value<float>(&options.my2)->default_value(0.3),
+      "A constant in the forward Euler Aliev-Panfilov equations."
+    )
+    (
+      "k",
+      po::value<float>(&options.k)->default_value(8.0),
+      "A constant in the forward Euler Aliev-Panfilov equations."
+    )
+    (
+      "epsilon",
+      po::value<float>(&options.epsilon)->default_value(0.01),
+      "A constant in the forward Euler Aliev-Panfilov equations."
+    )
+    (
+      "b",
+      po::value<float>(&options.b)->default_value(0.1),
+      "A constant in the forward Euler Aliev-Panfilov equations."
+    )
+    (
+      "a",
+      po::value<float>(&options.a)->default_value(0.1),
+      "A constant in the forward Euler Aliev-Panfilov equations."
+    )
+    (
+      "dt",
+      po::value<float>(&options.dt)->default_value(0.0001),
+      "A constant in the forward Euler Aliev-Panfilov equations."
+    )
+    (
+      "dx",
+      po::value<float>(&options.dx)->default_value(0.000143),
+      "A constant in the forward Euler Aliev-Panfilov equations."
+    )
+    (
+      "delta",
+      po::value<float>(&options.delta)->default_value(5.0e-5),
+      "A constant in the forward Euler Aliev-Panfilov equations."
     )
     (
       "cpu",
@@ -195,55 +237,18 @@ void workDivision(utils::Options &options) {
   }
 }
 
-std::vector<float> heatEquationCpu(
-  const std::vector<float> initial_values, 
-  const utils::Options &options) {
-  /*
-   * Heat Equation Vertex, computed on the CPU, unparallelized.
-   * The purpose of this function is to serve as the "true"
-   * solution.
-   * NOTE: can be very slow for large grids/large number of iterations
-   */
-  const float beta = 1.0 - 6.0*options.alpha;
-  unsigned h = options.height;
-  unsigned w = options.width;
-  unsigned d = options.depth;
-  unsigned iter = options.num_iterations;
-  std::vector<float> a(initial_values.size());
-  std::vector<float> b(initial_values.size());
-
-  // initial copy to include edges
-  for (std::size_t i = 0; i < initial_values.size(); ++i)  {
-    a[i] = initial_values[i]; 
-    b[i] = initial_values[i]; 
-  }
-
-  // Heat Equation iterations
-  for (std::size_t t = 0; t < iter; ++t) {
-    for (std::size_t x = 1; x < h - 1; ++x) {
-      for (std::size_t y = 1; y < w - 1; ++y) { 
-        for (std::size_t z = 1; z < d - 1; ++z) {
-          a[index(x,y,z,w,d)] = beta*b[index(x,y,z,w,d)] +
-            options.alpha*(
-              b[index(x+1,y,z,w,d)] +
-              b[index(x-1,y,z,w,d)] +
-              b[index(x,y+1,z,w,d)] +
-              b[index(x,y-1,z,w,d)] +
-              b[index(x,y,z+1,w,d)] +
-              b[index(x,y,z-1,w,d)]
-            );
-        }
-      }
-    }
-    for (std::size_t x = 1; x < h - 1; ++x) {
-      for (std::size_t y = 1; y < w - 1; ++y) { 
-        for (std::size_t z = 1; z < d - 1; ++z) {
-          b[index(x,y,z,w,d)] = a[index(x,y,z,w,d)];
-        }
-      }
-    }
-  }
-  return a;
+void testUpperBoundDt(utils::Options &options) {
+  float ka = options.k*options.a;
+  float k_1_a = options.k*(1 - options.a);
+  float max = (ka > k_1_a) ? ka : k_1_a;
+  float lambda = options.delta/(options.dx*options.dx);
+  float r_plus = options.k*(options.b+1)*(options.b+1)/4.0;
+  options.upper_bound_dt = 1.0/(4*lambda + max + r_plus);
+  if (options.dt > options.upper_bound_dt) 
+    throw std::runtime_error(
+      "Forward Euler method is not stable, because dt ("+std::to_string(options.dt)+
+      ") > upper bound ("+std::to_string(options.upper_bound_dt)+")."
+    );
 }
 
 void printMeanSquaredError(
@@ -267,7 +272,7 @@ void printMeanSquaredError(
   }
   double mean_squared_error = squared_error / (double) ((h-2)*(w-2)*(d-2));
 
-  std::cout << "\nMean Squared Error (IPU vs. CPU) = " << mean_squared_error;
+  std::cout << "\nMean Squared Error = " << mean_squared_error;
   if (mean_squared_error == double(0.0)) 
     std::cout << " (exactly)";
   std::cout << "\n";
@@ -292,7 +297,6 @@ void printResults(utils::Options &options, double wall_time) {
                                  << options.height*options.width*options.depth*1e-6 << " million elements"
     << "\nSmallest Sub-grid  = " << options.smallest_slice[0] << "*" << options.smallest_slice[1] << "*" << options.smallest_slice[2] 
     << "\nLargest Sub-grid   = " << options.largest_slice[0] << "*" << options.largest_slice[1] << "*" << options.largest_slice[2] 
-    << "\nalpha              = " << options.alpha
     << "\nNo. Iterations     = " << options.num_iterations
     << "\n"
     << "\nLaTeX Tabular Row"

@@ -1,9 +1,10 @@
 # Custom
 *.sbatch
-*./slurm
+*slurm*
 main
 main.o
 *.gp
+.vscode
 
 # Prerequisites
 *.d

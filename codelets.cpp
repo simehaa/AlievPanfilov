@@ -16,7 +16,7 @@ public:
   const float epsilon;
   const float my1;
   const float my2;
-  const float h;
+  const float dx;
   const float dt;
   const float k;
   const float a;
@@ -30,8 +30,8 @@ public:
   bool compute () {
     const unsigned w = worker_width;
     const unsigned pw = worker_width + 2;
-    const float d_h2 = delta/(h*h);
-    const b_plus_1 = b + 1;
+    const float d_dx2 = delta/(dx*dx);
+    const float b_plus_1 = b + 1;
     float e_center;
 
     for (std::size_t x = 1; x < worker_height + 1; ++x) {
@@ -41,7 +41,7 @@ public:
 
           // New e_out_center
           e_out[idx(x-1,y-1,w)][z-1] = e_center + dt*(
-            d_h2*(-6*in[e_center + 
+            d_dx2*(-6*e_center + 
               e_in[idx(x+1,y,pw)][z] + e_in[idx(x-1,y,pw)][z] +
               e_in[idx(x,y+1,pw)][z] + e_in[idx(x,y-1,pw)][z] +
               e_in[idx(x,y,pw)][z+1] + e_in[idx(x,y,pw)][z-1]
