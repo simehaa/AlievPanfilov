@@ -11,8 +11,9 @@
 
 poplar::ComputeSet createComputeSet(
   poplar::Graph &graph,
-  poplar::Tensor &in,
-  poplar::Tensor &out,
+  poplar::Tensor &e_in,
+  poplar::Tensor &e_out,
+  poplar::Tensor &r,
   utils::Options &options,
   const std::string& compute_set_name) {
 
@@ -23,114 +24,58 @@ poplar::ComputeSet createComputeSet(
   unsigned nd = options.splits[2]; // No. partitions along depth per IPU mesh
   unsigned nwh = 2; // No. partitions along height per tile
   unsigned nww = 3; // No. partitions along width per tile
+  unsigned nwd = 1; // No. partitions along depth per tile
 
-  for (std::size_t ipu = 0; ipu < options.num_ipus; ++ipu) {
+  // Work division per IPU (amongst tiles)
+  for (std::size_t x = 0; x < nh; ++x) {
+    for (std::size_t y = 0; y < nw; ++y) {
+      for (std::size_t z = 0; z < nd; ++z) {
 
-    // Ensure overlapping grids among the IPUs
-    std::size_t offset_back = 2;
-    auto ipu_e_in_slice = in.slice(
-      {
-        0, 
-        0, 
-        block_low(ipu, options.num_ipus, options.depth-2)
-      },
-      {
-        options.height, 
-        options.width, 
-        block_high(ipu, options.num_ipus, options.depth-2) + offset_back
-      }
-    );
-    auto ipu_e_out_slice = out.slice(
-      {
-        0, 
-        0, 
-        block_low(ipu, options.num_ipus, options.depth-2)
-      },
-      {
-        options.height, 
-        options.width, 
-        block_high(ipu, options.num_ipus, options.depth-2) + offset_back
-      }
-    );
-    auto ipu_r_slice = out.slice(
-      {
-        0, 
-        0, 
-        block_low(ipu, options.num_ipus, options.depth-2)
-      },
-      {
-        options.height, 
-        options.width, 
-        block_high(ipu, options.num_ipus, options.depth-2) + offset_back
-      }
-    );
-    std::size_t inter_depth = ipu_in_slice.shape()[2];
+        // Find indices and side lengths for this tile's mesh
+        unsigned tile_id = index(x, y, z, nw, nd); // + ipu*options.tiles_per_ipu;
+        
+        unsigned tile_x = block_low(x, nh, options.height);
+        unsigned tile_y = block_low(y, nw, options.width);
+        unsigned tile_z = block_low(z, nd, options.depth);
+        unsigned tile_height = block_size(x, nh, options.height);
+        unsigned tile_width = block_size(y, nw, options.width);
+        unsigned tile_depth = block_size(z, nd, options.depth);
 
-    // Work division per IPU (amongst tiles)
-    for (std::size_t x = 0; x < nh; ++x) {
-      for (std::size_t y = 0; y < nw; ++y) {
-        for (std::size_t z = 0; z < nd; ++z) {
+        // Record some metrics
+        std::vector<std::size_t> shape = {tile_height, tile_width, tile_depth};
+        if (volume(shape) < volume(options.smallest_slice))
+          options.smallest_slice = shape;
+        if (volume(shape) > volume(options.largest_slice)) 
+          options.largest_slice = shape;
 
-          // Find indices and side lengths for this tile's mesh
-          unsigned tile_id = index(x, y, z, nw, nd) + ipu*options.tiles_per_ipu;
-          unsigned tile_x = block_low(x, nh, options.height-2) + 1;
-          unsigned tile_y = block_low(y, nw, options.width-2) + 1;
-          unsigned tile_height = block_size(x, nh, options.height-2);
-          unsigned tile_width = block_size(y, nw, options.width-2);
-          unsigned z_low = block_low(z, nd, inter_depth-2) + 1;
-          unsigned z_high = block_high(z, nd, inter_depth-2) + 1;
-
-          // Record some metrics
-          std::vector<std::size_t> shape = {tile_height, tile_width, z_high - z_low};
-          if (volume(shape) < volume(options.smallest_slice))
-            options.smallest_slice = shape;
-          if (volume(shape) > volume(options.largest_slice)) 
-            options.largest_slice = shape;
-
-          // Work division per tile (amongst threads)
-          for (std::size_t worker_xi = 0; worker_xi < nwh; ++worker_xi) {
-            for (std::size_t worker_yi = 0; worker_yi < nww; ++worker_yi) {
+        // Work division per tile (amongst threads)
+        for (std::size_t worker_xi = 0; worker_xi < nwh; ++worker_xi) {
+          for (std::size_t worker_yi = 0; worker_yi < nww; ++worker_yi) {
+            for (std::size_t worker_zi = 0; worker_zi < nwd; ++worker_zi) {
               
               // Dividing tile work among workers
               unsigned x_low = tile_x + block_low(worker_xi, nwh, tile_height);
               unsigned x_high = tile_x + block_high(worker_xi, nwh, tile_height);
               unsigned y_low = tile_y + block_low(worker_yi, nww, tile_width);
               unsigned y_high = tile_y + block_high(worker_yi, nww, tile_width);
+              unsigned z_low = tile_z + block_low(worker_zi, nwd, tile_depth);
+              unsigned z_high = tile_z + block_high(worker_zi, nwd, tile_depth);
 
-              // NOTE: include overlap for input slice
-              auto in_slice = ipu_in_slice.slice(
-                {
-                  x_low-1, 
-                  y_low-1, 
-                  z_low-1
-                },
-                {
-                  x_high+1, 
-                  y_high+1, 
-                  z_high+1
-                }
-              );
+              // Vertex' r slice
+              auto r_slice = r.slice({x_low,y_low,z_low}, {x_high, y_high, z_high});
 
-              // No overlap on the output slice
-              auto out_slice = ipu_out_slice.slice(
-                {
-                  x_low, 
-                  y_low, 
-                  z_low
-                },
-                {
-                  x_high, 
-                  y_high, 
-                  z_high
-                }
-              );
+              // Vertex' e_out slice (offset of +1 because of the padding)
+              auto e_out_slice = e_out.slice({x_low+1, y_low+1, z_low+1}, {x_high+1, y_high+1, z_high+1});
+
+              // Vertex' e_in slice (padding of 1 wrt. e_out slice)
+              auto e_in_slice = e_in.slice({x_low, y_low, z_low}, {x_high+2, y_high+2, z_high+2});
 
               // Assign vertex to graph 
               // (six vertices per tile, which will be solved by six different threads)
               auto v = graph.addVertex(compute_set, "AlievPanfilovVertex");
-              graph.connect(v["e_in"], in_slice.flatten(0,2));
-              graph.connect(v["e_out"], out_slice.flatten(0,2));
-              graph.connect(v["r"], in_slice.flatten(0,2));
+              graph.connect(v["e_in"], e_in_slice.flatten(0,2));
+              graph.connect(v["e_out"], e_out_slice.flatten(0,2));
+              graph.connect(v["r"], r_slice.flatten(0,2));
               graph.setInitialValue(v["worker_height"], x_high - x_low);
               graph.setInitialValue(v["worker_width"], y_high - y_low);
               graph.setInitialValue(v["worker_depth"], z_high - z_low);
@@ -162,65 +107,58 @@ std::vector<poplar::program::Program> createIpuPrograms(
   auto e_a = graph.addVariable(poplar::FLOAT, {options.height + 2, options.width + 2, options.depth + 2}, "e_a");
   auto e_b = graph.addVariable(poplar::FLOAT, {options.height + 2, options.width + 2, options.depth + 2}, "e_b");
   auto r = graph.addVariable(poplar::FLOAT, {options.height, options.width, options.depth}, "r");
-  
-  // Top-level partitioning amongst IPUs
-  std::vector<std::size_t> partitions(3) = {1, 1, options.num_ipus};
-  for (std::size_t ipu_x = 0; ipu_x < partitions[0]; ++ipu_x) {
-    for (std::size_t ipu_y = 0; ipu_y < partitions[1]; ++ipu_y) {
-      for (std::size_t ipu_z = 0; ipu_z < partitions[2]; ++ipu_z) {
-        auto ipu_slice = r.slice(
+
+  // Fine-level partitioning amongst tiles
+  for (std::size_t tile_x = 0; tile_x < options.splits[0]; ++tile_x) {
+    for (std::size_t tile_y = 0; tile_y < options.splits[1]; ++tile_y) {
+      for (std::size_t tile_z = 0; tile_z < options.splits[2]; ++tile_z) {
+        // Running index over all tiles
+        unsigned tile_id = index(tile_x, tile_y, tile_z, options.splits[1], options.splits[2]); // + ipu*options.tiles_per_ipu;
+
+        // split up r (easiest, because neither padding nor overlap)
+        auto r_slice = r.slice(
           {
-            block_low(ipu_x, partitions[0], options.height),
-            block_low(ipu_y, partitions[1], options.width),
-            block_low(ipu_z, partitions[2], options.depth)
+            block_low(tile_x, options.splits[0], options.height), 
+            block_low(tile_y, options.splits[1], options.width),
+            block_low(tile_z, options.splits[2], options.depth)
           },
           {
-            block_high(ipu_x, partitions[0], options.height)
-            block_high(ipu_y, partitions[1], options.width)
-            block_high(ipu_z, partitions[2], options.depth)
+            block_high(tile_x, options.splits[0], options.height), 
+            block_high(tile_y, options.splits[1], options.width),
+            block_high(tile_z, options.splits[2], options.depth)
           }
         );
 
-        // Fine-level partitioning amongst tiles
-        for (std::size_t tile_x = 0; tile_x < options.splits[0]; ++tile_x) {
-          for (std::size_t tile_y = 0; tile_y < options.splits[1]; ++tile_y) {
-            for (std::size_t tile_z = 0; tile_z < options.splits[2]; ++tile_z) {
+        // Evaluate offsets in all dimensions: the paddings should be included for boundary partitions
+        std::size_t offset_top = (tile_x == 0) ? 0 : 1;
+        std::size_t offset_left = (tile_y == 0) ? 0 : 1;
+        std::size_t offset_front = (tile_z == 0) ? 0 : 1;
+        std::size_t offset_bottom = (tile_x == options.splits[0] - 1) ? 2 : 1;
+        std::size_t offset_right = (tile_y == options.splits[1] - 1) ? 2 : 1;
+        std::size_t offset_back = (tile_z == options.splits[2] - 1) ? 2 : 1;
 
-              unsigned tile_id = index(tile_x, tile_y, tile_z, options.splits[1], options.splits[2]) + ipu*options.tiles_per_ipu;
-
-              // Evaluate offsets in all dimensions (avoid overlap at edges)
-              std::size_t offset_top = (tile_x == 0) ? 0 : 1;
-              std::size_t offset_left = (tile_y == 0) ? 0 : 1;
-              std::size_t inter_offset_front = (tile_z == 0) ? 0 : 1;
-              std::size_t offset_bottom = (tile_x == options.splits[0] - 1) ? 2 : 1;
-              std::size_t offset_right = (tile_y == options.splits[1] - 1) ? 2 : 1;
-              std::size_t inter_offset_back = (tile_z == options.splits[2] - 1) ? 2 : 1;
-
-              auto tile_slice = ipu_slice.slice(
-                {
-                  block_low(tile_x, options.splits[0], options.height-2) + offset_top, 
-                  block_low(tile_y, options.splits[1], options.width-2) + offset_left,
-                  block_low(tile_z, options.splits[2], inter_depth-2) + inter_offset_front
-                },
-                {
-                  block_high(tile_x, options.splits[0], options.height-2) + offset_bottom, 
-                  block_high(tile_y, options.splits[1], options.width-2) + offset_right,
-                  block_high(tile_z, options.splits[2], inter_depth-2) + inter_offset_back
-                }
-              );
-              
-              graph.setTileMapping(tile_slice, tile_id);
-            }
+        auto e_a_slice = e_a.slice(
+          {
+            block_low(tile_x, options.splits[0], options.height) + offset_top, 
+            block_low(tile_y, options.splits[1], options.width) + offset_left,
+            block_low(tile_z, options.splits[2], options.depth) + offset_front
+          },
+          {
+            block_high(tile_x, options.splits[0], options.height) + offset_bottom, 
+            block_high(tile_y, options.splits[1], options.width) + offset_right,
+            block_high(tile_z, options.splits[2], options.depth) + offset_back
           }
-        }
+        );
+        
+        graph.setTileMapping(r_slice, tile_id);
+        graph.setTileMapping(e_a_slice, tile_id);
       }
     }
   }
 
-  // Apply the tile mapping of "a" to be the same for "b"
+  // Apply the tile mapping of "e_a" to be the same for "e_b"
   const auto& tile_mapping = graph.getTileMapping(e_a);
   graph.setTileMapping(e_b, tile_mapping);
-  graph.setTileMapping(r, tile_mapping);
 
   // Define data streams
   std::size_t volume = options.height*options.width*options.depth;
@@ -231,17 +169,22 @@ std::vector<poplar::program::Program> createIpuPrograms(
 
   std::vector<poplar::program::Program> programs;
 
-  // Program 0: move content of initial_values into both device variables a and b
+  // Acutal e_a and e_b are only the inner slice which excludes the padding of 1 (in all directions)
+  auto e_a_inner = e_a.slice({1, 1, 1}, {options.height+1, options.width+1, options.depth+1});
+  auto e_b_inner = e_b.slice({1, 1, 1}, {options.height+1, options.width+1, options.depth+1});
+
+  // Program 0: move initial values onto all device tensors
   programs.push_back(
-    poplar::program::Sequence{
-      poplar::program::Copy(host_to_device, e_a),
-      poplar::program::Copy(e_a, e_b),
-    }
+    poplar::program::Sequence({
+      poplar::program::Copy(host_to_device_r, r),
+      poplar::program::Copy(host_to_device_e, e_a_inner),
+      poplar::program::Copy(e_a_inner, e_b_inner) // on-device copy (much faster)
+    })
   );
 
   // Create compute sets
-  auto compute_set_b_to_a = createComputeSet(graph, b, a, options, "compute_set_b_to_a");
-  auto compute_set_a_to_b = createComputeSet(graph, a, b, options, "compute_set_a_to_b");
+  auto compute_set_b_to_a = createComputeSet(graph, e_b, e_a, r, options, "compute_set_b_to_a");
+  auto compute_set_a_to_b = createComputeSet(graph, e_a, e_b, r, options, "compute_set_a_to_b");
   poplar::program::Sequence execute_this_compute_set;
 
   if (options.num_iterations % 2 == 1) { // if num_iterations is odd: add one extra iteration
@@ -252,15 +195,21 @@ std::vector<poplar::program::Program> createIpuPrograms(
   execute_this_compute_set.add(
     poplar::program::Repeat(
       options.num_iterations/2,
-      poplar::program::Sequence{
+      poplar::program::Sequence({
         poplar::program::Execute(compute_set_b_to_a),
         poplar::program::Execute(compute_set_a_to_b)
-      }
+      })
     )
   );
-
   programs.push_back(execute_this_compute_set);
-  programs.push_back(poplar::program::Copy(b, device_to_host));
+
+  // Copy results back to host (e_b holds last e)
+  programs.push_back(
+    poplar::program::Sequence({
+      poplar::program::Copy(r, device_to_host_r),
+      poplar::program::Copy(e_b_inner, device_to_host_e),
+    })
+  );
 
   return programs;
 }
@@ -268,19 +217,15 @@ std::vector<poplar::program::Program> createIpuPrograms(
 int main (int argc, char** argv) {
   try {
     // Get options from command line arguments / defaults. (see utils.hpp)
-    auto options = utils::parseOptions(argc, argv);
-    testUpperBoundDt(options);
-
-    // Set up of 3D mesh properties
-    std::size_t base_length = 320;
-    options.side = side_length(options.num_ipus, base_length);
+    auto options = utils::parse_options(argc, argv);
+    test_upper_dt(options);
 
     // Attach to IPU device
-    auto device = getDevice(options);
+    auto device = get_device(options);
     auto &target = device.getTarget();
     options.num_tiles_available = target.getNumTiles();
-    options.tiles_per_ipu = options.num_tiles_available/options.num_ipus;
-    workDivision(options);
+    options.tiles_per_ipu = options.num_tiles_available / options.num_ipus;
+    work_division(options);
     
     std::size_t h = options.height;
     std::size_t w = options.width;
@@ -309,10 +254,10 @@ int main (int argc, char** argv) {
     auto programs = createIpuPrograms(graph, options); // Custom function to construct vector of programs
     auto exe = poplar::compileGraph(graph, programs);
     poplar::Engine engine(std::move(exe));
-    engine.connectStream("host_to_device_stream_e", &initial_e[0], &initial_e[volume]);
-    engine.connectStream("host_to_device_stream_r", &initial_r[0], &initial_r[volume]);
-    engine.connectStream("device_to_host_stream_e", &ipu_results_e[0], &ipu_results_e[volume]);
-    engine.connectStream("device_to_host_stream_r", &ipu_results_r[0], &ipu_results_r[volume]);
+    engine.connectStream("host_to_device_stream_e", &host_e[0], &host_e[volume]);
+    engine.connectStream("host_to_device_stream_r", &host_r[0], &host_r[volume]);
+    engine.connectStream("device_to_host_stream_e", &ipu_e[0], &ipu_e[volume]);
+    engine.connectStream("device_to_host_stream_r", &ipu_r[0], &ipu_r[volume]);
     engine.load(device);
 
     std::size_t num_program_steps = programs.size();
