@@ -243,11 +243,11 @@ void testUpperBoundDt(utils::Options &options) {
   float max = (ka > k_1_a) ? ka : k_1_a;
   float lambda = options.delta/(options.dx*options.dx);
   float r_plus = options.k*(options.b+1)*(options.b+1)/4.0;
-  options.upper_bound_dt = 1.0/(4*lambda + max + r_plus);
-  if (options.dt > options.upper_bound_dt) 
+  float upper_bound_dt = 1.0/(4*lambda + max + r_plus);
+  if (options.dt > upper_bound_dt) 
     throw std::runtime_error(
       "Forward Euler method is not stable, because dt ("+std::to_string(options.dt)+
-      ") > upper bound ("+std::to_string(options.upper_bound_dt)+")."
+      ") > upper bound ("+std::to_string(upper_bound_dt)+")."
     );
 }
 
