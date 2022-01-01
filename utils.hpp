@@ -6,23 +6,7 @@
 #include <math.h>
 #include <bits/stdc++.h>
 
-/*
-README
-To avoid confusion in indexing:
-  x goes along heigth
-  y goes along width
-  z goes along depth
-
-All triple nested loops go:
-for x in height
-  for y in width
-    for z in depth
-
-And the 3D dimension is organized as [h, w, d]
-*/
-
 namespace utils {
-    
   struct Options {
     // Command line arguments (with default values)
     unsigned num_ipus;
@@ -50,7 +34,7 @@ namespace utils {
   };
 
   inline
-  Options parseOptions(int argc, char** argv) {
+  Options parse_options(int argc, char** argv) {
     Options options;
     namespace po = boost::program_options;
     po::options_description desc("Flags");
@@ -140,10 +124,9 @@ namespace utils {
     po::notify(vm);
     return options;
   }
-
 } // End of namespace Utils
 
-poplar::Device getDevice(utils::Options &options) {
+poplar::Device get_device(utils::Options &options) {
   /* return a Poplar device with the desired number of IPUs */
   std::size_t n = options.num_ipus;
   if (n!=1 && n!=2 && n!=4 && n!=8 && n!=16 && n!=32 && n!=64)
@@ -159,16 +142,6 @@ poplar::Device getDevice(utils::Options &options) {
       return std::move(device);
 
   throw std::runtime_error("No hardware device available.");
-}
-
-std::size_t side_length(std::size_t num_ipus, std::size_t base_length) {
-  std::size_t log2_num_ipus = log(num_ipus) / log(2);
-  std::size_t side = base_length*pow(1.26, log2_num_ipus);
-  return side;
-}
-
-inline float randomFloat() {
-  return static_cast <float> (rand() / static_cast <float> (RAND_MAX));
 }
 
 inline static unsigned index(unsigned x, unsigned y, unsigned z, unsigned width, unsigned depth) { 
@@ -192,7 +165,7 @@ std::size_t volume(std::vector<std::size_t> shape) {
   return shape[0]*shape[1]*shape[2];
 }
 
-void workDivision(utils::Options &options) {
+void work_division(utils::Options &options) {
   /* Function UPDATES options.splits
    * 1) all tiles will be used, hence options.num_tiles_available must
    *    previously be updated by using the target object
@@ -237,7 +210,7 @@ void workDivision(utils::Options &options) {
   }
 }
 
-void testUpperBoundDt(utils::Options &options) {
+void test_upper_dt(utils::Options &options) {
   float ka = options.k*options.a;
   float k_1_a = options.k*(1 - options.a);
   float max = (ka > k_1_a) ? ka : k_1_a;
@@ -251,86 +224,23 @@ void testUpperBoundDt(utils::Options &options) {
     );
 }
 
-void printMeanSquaredError(
-  std::vector<float> a, 
-  std::vector<float> b, 
-  utils::Options &options) {
-  /*
-   * Compute the MSE, __only the inner elements__, of two 3D grids
-   */
-  double squared_error = 0, diff;
-  std::size_t h = options.height;
-  std::size_t w = options.width;
-  std::size_t d = options.depth;
-  for (std::size_t x = 1; x < h - 1; ++x) {
-    for (std::size_t y = 1; y < w - 1; ++y) { 
-      for (std::size_t z = 1; z < d - 1; ++z) {
-        diff = double(a[index(x,y,z,w,d)] - b[index(x,y,z,w,d)]);
-        squared_error += diff*diff;
-      }
-    }
-  }
-  double mean_squared_error = squared_error / (double) ((h-2)*(w-2)*(d-2));
-
-  std::cout << "\nMean Squared Error = " << mean_squared_error;
-  if (mean_squared_error == double(0.0)) 
-    std::cout << " (exactly)";
-  std::cout << "\n";
-}
-
 void printResults(utils::Options &options, double wall_time) {
-
   // Calculate metrics
-  double inner_volume = (double) options.height * (double) options.width * (double) options.depth;
-  double flops_per_element = 8.0;
-  double flops = inner_volume * options.num_iterations * flops_per_element / wall_time;
-  double bandwidth = 8 * inner_volume * options.num_iterations * sizeof(float) / wall_time;
+  double mesh_volume = (double) options.height * (double) options.width * (double) options.depth;
+  double flops_per_element = 29.0;
+  double flops = mesh_volume * (double) options.num_iterations * flops_per_element / wall_time;
   double tflops = flops*1e-12;
-  double bandwidth_TB_s = bandwidth*1e-12;
 
-  std::cout << "3D Isotropic Diffusion"
-    << "\n----------------------"
-    << "\nVertex             = " << options.vertex
+  std::cout 
+    <<   "3D Aliev-Panfilov model"
+    << "\n-----------------------"
     << "\nNo. IPUs           = " << options.num_ipus
     << "\nNo. Tiles          = " << options.num_tiles_available
     << "\nTotal Grid         = " << options.height << "*" << options.width << "*" << options.depth << " = "
-                                 << options.height*options.width*options.depth*1e-6 << " million elements"
+                                 << mesh_volume*1e-6 << " million elements"
     << "\nSmallest Sub-grid  = " << options.smallest_slice[0] << "*" << options.smallest_slice[1] << "*" << options.smallest_slice[2] 
     << "\nLargest Sub-grid   = " << options.largest_slice[0] << "*" << options.largest_slice[1] << "*" << options.largest_slice[2] 
     << "\nNo. Iterations     = " << options.num_iterations
-    << "\n"
-    << "\nLaTeX Tabular Row"
-    << "\n-----------------"
-    << "\nNo. IPUs & Grid & No. Iterations & Time [s] & Throughput [TFLOPS] & Minimum Bandwidth [TB/s] \\\\\n" 
-    << options.num_ipus << " & "
-    << "$" << options.height << "\\times " << options.width << "\\times " << options.depth << "$ & " 
-    << options.num_iterations << " & " << std::fixed
-    << std::setprecision(2) << wall_time << " & " 
-    << std::setprecision(2) << tflops << " & " 
-    << std::setprecision(2) << bandwidth_TB_s << " \\\\"
+    << "\nTFLOPS             = " << std::setprecision(4) << tflops
     << "\n";
-}
-
-void printMultiIpuGridInfo(std::size_t base_length) {
-  float base_volume = 0;
-
-  std::cout 
-    << "\\begin{tabular}{ccc}"
-    << "\n\\toprule"
-    << "\nNumber of IPUs & Grid Shape & Relative Volume \\\\\\midrule"
-    << std::fixed << std::setprecision(2);
-
-  for (std::size_t i = 1; i <= 64; i*=2) {
-    std::size_t side = side_length(i, base_length);
-    float volume = float(side)*float(side)*float(side);
-    if (i == 1) base_volume = volume;
-    std::cout << "\n" 
-      << i << " & $"
-      << side << "\\times " << side << "\\times " << side << "$ & "
-      << volume/base_volume << "x \\\\";
-  }
-
-  std::cout 
-    << "\n\\bottomrule"
-    << "\n\\end{tabular}\n";
 }

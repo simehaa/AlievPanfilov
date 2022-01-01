@@ -11,6 +11,8 @@
 
 poplar::ComputeSet createComputeSet(
   poplar::Graph &graph,
+  poplar::Tensor &e_in,
+  poplar::Tensor &e_out,
   poplar::Tensor &r,
   utils::Options &options,
   const std::string& compute_set_name) {
@@ -59,14 +61,20 @@ poplar::ComputeSet createComputeSet(
               unsigned z_low = tile_z + block_low(worker_zi, nwd, tile_depth);
               unsigned z_high = tile_z + block_high(worker_zi, nwd, tile_depth);
 
-              // Vertex' slice
+              // Vertex' r slice
               auto r_slice = r.slice({x_low,y_low,z_low}, {x_high, y_high, z_high});
+
+              // Vertex' e_out slice (offset of +1 because of the padding)
+              auto e_out_slice = e_out.slice({x_low+1, y_low+1, z_low+1}, {x_high+1, y_high+1, z_high+1});
+
+              // Vertex' e_in slice (padding of 1 wrt. e_out slice)
+              auto e_in_slice = e_in.slice({x_low, y_low, z_low}, {x_high+2, y_high+2, z_high+2});
 
               // Assign vertex to graph 
               // (six vertices per tile, which will be solved by six different threads)
               auto v = graph.addVertex(compute_set, "AlievPanfilovVertex");
-              // graph.connect(v["e_in"], in_slice.flatten(0,2));
-              // graph.connect(v["e_out"], out_slice.flatten(0,2));
+              graph.connect(v["e_in"], e_in_slice.flatten(0,2));
+              graph.connect(v["e_out"], e_out_slice.flatten(0,2));
               graph.connect(v["r"], r_slice.flatten(0,2));
               graph.setInitialValue(v["worker_height"], x_high - x_low);
               graph.setInitialValue(v["worker_width"], y_high - y_low);
@@ -96,8 +104,8 @@ std::vector<poplar::program::Program> createIpuPrograms(
   utils::Options &options) { 
 
   // Allocate tensors (pad e_a and e_b in order to handle boundary condition)
-  // auto e_a = graph.addVariable(poplar::FLOAT, {options.height + 2, options.width + 2, options.depth + 2}, "e_a");
-  // auto e_b = graph.addVariable(poplar::FLOAT, {options.height + 2, options.width + 2, options.depth + 2}, "e_b");
+  auto e_a = graph.addVariable(poplar::FLOAT, {options.height + 2, options.width + 2, options.depth + 2}, "e_a");
+  auto e_b = graph.addVariable(poplar::FLOAT, {options.height + 2, options.width + 2, options.depth + 2}, "e_b");
   auto r = graph.addVariable(poplar::FLOAT, {options.height, options.width, options.depth}, "r");
 
   // Fine-level partitioning amongst tiles
@@ -121,52 +129,62 @@ std::vector<poplar::program::Program> createIpuPrograms(
           }
         );
 
-        // Evaluate offsets in all dimensions: the paddings should be included for boudnary partitions
-        // std::size_t offset_top = (tile_x == 0) ? 0 : 1;
-        // std::size_t offset_left = (tile_y == 0) ? 0 : 1;
-        // std::size_t offset_front = (tile_z == 0) ? 0 : 1;
-        // std::size_t offset_bottom = (tile_x == options.splits[0] - 1) ? 2 : 1;
-        // std::size_t offset_right = (tile_y == options.splits[1] - 1) ? 2 : 1;
-        // std::size_t offset_back = (tile_z == options.splits[2] - 1) ? 2 : 1;
+        // Evaluate offsets in all dimensions: the paddings should be included for boundary partitions
+        std::size_t offset_top = (tile_x == 0) ? 0 : 1;
+        std::size_t offset_left = (tile_y == 0) ? 0 : 1;
+        std::size_t offset_front = (tile_z == 0) ? 0 : 1;
+        std::size_t offset_bottom = (tile_x == options.splits[0] - 1) ? 2 : 1;
+        std::size_t offset_right = (tile_y == options.splits[1] - 1) ? 2 : 1;
+        std::size_t offset_back = (tile_z == options.splits[2] - 1) ? 2 : 1;
 
-        // auto e_slice = e_a.slice(
-        //   {
-        //     block_low(tile_x, options.splits[0], options.height) + offset_top, 
-        //     block_low(tile_y, options.splits[1], options.width) + offset_left,
-        //     block_low(tile_z, options.splits[2], options.depth) + offset_front
-        //   },
-        //   {
-        //     block_high(tile_x, options.splits[0], options.height) + offset_bottom, 
-        //     block_high(tile_y, options.splits[1], options.width) + offset_right,
-        //     block_high(tile_z, options.splits[2], options.depth) + offset_back
-        //   }
-        // );
+        auto e_a_slice = e_a.slice(
+          {
+            block_low(tile_x, options.splits[0], options.height) + offset_top, 
+            block_low(tile_y, options.splits[1], options.width) + offset_left,
+            block_low(tile_z, options.splits[2], options.depth) + offset_front
+          },
+          {
+            block_high(tile_x, options.splits[0], options.height) + offset_bottom, 
+            block_high(tile_y, options.splits[1], options.width) + offset_right,
+            block_high(tile_z, options.splits[2], options.depth) + offset_back
+          }
+        );
         
         graph.setTileMapping(r_slice, tile_id);
+        graph.setTileMapping(e_a_slice, tile_id);
       }
     }
   }
 
-  // Apply the tile mapping of "a" to be the same for "b"
-  // const auto& tile_mapping = graph.getTileMapping(e_a);
-  // graph.setTileMapping(e_b, tile_mapping);
-  // graph.setTileMapping(r, tile_mapping);
+  // Apply the tile mapping of "e_a" to be the same for "e_b"
+  const auto& tile_mapping = graph.getTileMapping(e_a);
+  graph.setTileMapping(e_b, tile_mapping);
 
   // Define data streams
   std::size_t volume = options.height*options.width*options.depth;
-  // auto host_to_device_e = graph.addHostToDeviceFIFO("host_to_device_stream_e", poplar::FLOAT, volume); // NB larger volume
+  auto host_to_device_e = graph.addHostToDeviceFIFO("host_to_device_stream_e", poplar::FLOAT, volume);
   auto host_to_device_r = graph.addHostToDeviceFIFO("host_to_device_stream_r", poplar::FLOAT, volume);
-  // auto device_to_host_e = graph.addDeviceToHostFIFO("device_to_host_stream_e", poplar::FLOAT, volume);
+  auto device_to_host_e = graph.addDeviceToHostFIFO("device_to_host_stream_e", poplar::FLOAT, volume);
   auto device_to_host_r = graph.addDeviceToHostFIFO("device_to_host_stream_r", poplar::FLOAT, volume);
 
   std::vector<poplar::program::Program> programs;
 
-  // Program 0: move content of initial_values of r
-  programs.push_back(poplar::program::Copy(host_to_device_r, r));
+  // Acutal e_a and e_b are only the inner slice which excludes the padding of 1 (in all directions)
+  auto e_a_inner = e_a.slice({1, 1, 1}, {options.height+1, options.width+1, options.depth+1});
+  auto e_b_inner = e_b.slice({1, 1, 1}, {options.height+1, options.width+1, options.depth+1});
+
+  // Program 0: move initial values onto all device tensors
+  programs.push_back(
+    poplar::program::Sequence({
+      poplar::program::Copy(host_to_device_r, r),
+      poplar::program::Copy(host_to_device_e, e_a_inner),
+      poplar::program::Copy(e_a_inner, e_b_inner) // on-device copy (much faster)
+    })
+  );
 
   // Create compute sets
-  auto compute_set_b_to_a = createComputeSet(graph, r, options, "compute_set_b_to_a");
-  auto compute_set_a_to_b = createComputeSet(graph, r, options, "compute_set_a_to_b");
+  auto compute_set_b_to_a = createComputeSet(graph, e_b, e_a, r, options, "compute_set_b_to_a");
+  auto compute_set_a_to_b = createComputeSet(graph, e_a, e_b, r, options, "compute_set_a_to_b");
   poplar::program::Sequence execute_this_compute_set;
 
   if (options.num_iterations % 2 == 1) { // if num_iterations is odd: add one extra iteration
@@ -177,15 +195,21 @@ std::vector<poplar::program::Program> createIpuPrograms(
   execute_this_compute_set.add(
     poplar::program::Repeat(
       options.num_iterations/2,
-      poplar::program::Sequence{
+      poplar::program::Sequence({
         poplar::program::Execute(compute_set_b_to_a),
         poplar::program::Execute(compute_set_a_to_b)
-      }
+      })
     )
   );
   programs.push_back(execute_this_compute_set);
 
-  programs.push_back(poplar::program::Copy(r, device_to_host_r));
+  // Copy results back to host (e_b holds last e)
+  programs.push_back(
+    poplar::program::Sequence({
+      poplar::program::Copy(r, device_to_host_r),
+      poplar::program::Copy(e_b_inner, device_to_host_e),
+    })
+  );
 
   return programs;
 }
@@ -193,23 +217,23 @@ std::vector<poplar::program::Program> createIpuPrograms(
 int main (int argc, char** argv) {
   try {
     // Get options from command line arguments / defaults. (see utils.hpp)
-    auto options = utils::parseOptions(argc, argv);
-    testUpperBoundDt(options);
+    auto options = utils::parse_options(argc, argv);
+    test_upper_dt(options);
 
     // Attach to IPU device
-    auto device = getDevice(options);
+    auto device = get_device(options);
     auto &target = device.getTarget();
     options.num_tiles_available = target.getNumTiles();
-    options.tiles_per_ipu = options.num_tiles_available/options.num_ipus;
-    workDivision(options);
+    options.tiles_per_ipu = options.num_tiles_available / options.num_ipus;
+    work_division(options);
     
     std::size_t h = options.height;
     std::size_t w = options.width;
     std::size_t d = options.depth;
     std::size_t volume = h*w*d;
-    // std::vector<float> host_e(volume);
+    std::vector<float> host_e(volume);
     std::vector<float> host_r(volume);
-    // std::vector<float> ipu_e(volume); 
+    std::vector<float> ipu_e(volume); 
     std::vector<float> ipu_r(volume); 
 
     // initial values
@@ -218,7 +242,7 @@ int main (int argc, char** argv) {
     for (std::size_t x = 0; x < h; ++x) {
       for (std::size_t y = 0; y < w; ++y) {
         for (std::size_t z = 0; z < d; ++z) {
-          // host_e[index(x,y,z,w,d)] = (y < w/2) ? 0.0 : 1.0;
+          host_e[index(x,y,z,w,d)] = (y < w/2) ? 0.0 : 1.0;
           host_r[index(x,y,z,w,d)] = (x < h/2) ? 1.0 : 0.0;
         }
       }
@@ -230,9 +254,9 @@ int main (int argc, char** argv) {
     auto programs = createIpuPrograms(graph, options); // Custom function to construct vector of programs
     auto exe = poplar::compileGraph(graph, programs);
     poplar::Engine engine(std::move(exe));
-    // engine.connectStream("host_to_device_stream_e", &initial_e[0], &initial_e[volume]);
+    engine.connectStream("host_to_device_stream_e", &host_e[0], &host_e[volume]);
     engine.connectStream("host_to_device_stream_r", &host_r[0], &host_r[volume]);
-    // engine.connectStream("device_to_host_stream_e", &ipu_results_e[0], &ipu_results_e[volume]);
+    engine.connectStream("device_to_host_stream_e", &ipu_e[0], &ipu_e[volume]);
     engine.connectStream("device_to_host_stream_r", &ipu_r[0], &ipu_r[volume]);
     engine.load(device);
 
