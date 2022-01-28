@@ -1,40 +1,15 @@
-# Custom
-*.sbatch
-*slurm*
-main
-main.o
-*.gp
+# Folders
 .vscode
-
-# Prerequisites
-*.d
+report
+slurm
+data
 
 # Compiled Object files
-*.slo
-*.lo
 *.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
+*.gp
 
 # Executables
 *.exe
 *.out
 *.app
+main

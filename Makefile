@@ -1,25 +1,31 @@
-POPC ?= popc
-PROTOC ?= protoc
-
-LDLIBS ?= -lpoplar -lpoputil -lpopops -lboost_program_options -lprotobuf
+POPC = popc
+CXX = g++-11
+CPPFLAGS = -std=c++20
+CXXFLAGS = -O3
+POPXXFLAGS = -O3 -target=ipu2
+LDLIBS = -lpoplar -lboost_program_options
+TARGETS = main codelets.gp
 SOURCES = main.cpp
-TARGETS = main
-
-CPPFLAGS ?= -std=c++11
-CXXFLAGS ?= -O3
-POPXXFLAGS ?= -O3 -target=ipu2
+SRCDIR = src
+INCDIR = -I./include
+SRC := $(wildcard $(SRCDIR)/*.cpp)
+OBJ	:= $(SRC:$(SRCDIR)/%.cpp=%.o)
 
 all: $(TARGETS)
 
-main: main.o
-	$(CXX) $(LDFLAGS) $+ $(LOADLIBES) $(LDLIBS) -o $@
+# Primary binary: compilation
+main: $(OBJ)
+	$(CXX) $+ $(LDLIBS) -o $@
 
-main.o: codelets.gp main.cpp utils.hpp
-main.cpp: utils.hpp
+# Object file and dependencies
+.INTERMEDIATE: $(OBJ)
+%.o: $(SRCDIR)/%.cpp
+	$(CXX) $(INCDIR) -c $+ $(LDLIBS) -o $@
 
+# Codelet compilation with popc
 %.gp: %.cpp
 	$(POPC) $(POPXXFLAGS) $+ -o $@
 
 .PHONY: clean
 clean:
-	$(RM) $(TARGETS) *.o *.gp
+	$(RM) $(TARGETS)
