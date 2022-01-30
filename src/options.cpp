@@ -8,12 +8,12 @@ Options parse_options(int argc, char** argv) {
 	("help", "Show command help.")
 	(
 		"num-ipus",
-		po::value<unsigned>(&options.num_ipus)->default_value(1),
+		po::value<std::size_t>(&options.num_ipus)->default_value(1),
 		"Number of IPUs (must be a power of 2)"
 	)
 	(
 		"num-iterations",
-		po::value<unsigned>(&options.num_iterations)->default_value(10000),
+		po::value<std::size_t>(&options.num_iterations)->default_value(10000),
 		"PDE: number of iterations to execute on grid."
 	)
 	(
@@ -75,11 +75,6 @@ Options parse_options(int argc, char** argv) {
 		"delta",
 		po::value<float>(&options.delta)->default_value(5.0e-5),
 		"A constant in the forward Euler Aliev-Panfilov equations."
-	)
-	(
-		"cpu",
-		po::bool_switch(&options.cpu)->default_value(false),
-		"Also perform CPU execution to control results from IPU."
 	);
 
 	po::variables_map vm;

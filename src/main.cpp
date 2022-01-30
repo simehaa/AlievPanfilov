@@ -14,13 +14,7 @@ int main (int argc, char** argv) {
     auto options = parse_options(argc, argv);
     test_upper_dt(options);
 
-    // Attach to IPU device
-    auto device = get_device(options.num_ipus);
-    auto &target = device.getTarget();
-    options.num_tiles_available = target.getNumTiles();
-    options.tiles_per_ipu = options.num_tiles_available / options.num_ipus;
-    work_division(options);
-    
+    // Initialize meshes
     std::size_t h = options.height;
     std::size_t w = options.width;
     std::size_t d = options.depth;
@@ -42,9 +36,16 @@ int main (int argc, char** argv) {
       }
     }
     
+    // Attach to IPU device
+    auto device = get_device(options.num_ipus);
+    auto &target = device.getTarget();
+    options.num_tiles_available = target.getNumTiles();
+    options.tiles_per_ipu = options.num_tiles_available / options.num_ipus;
+    work_division(options);
+    
     // Setup of programs, graph and engine
     poplar::Graph graph{target};
-    graph.addCodelets("codelets.gp");
+    graph.addCodelets("obj/codelets.gp");
     auto programs = createIpuPrograms(graph, options); // Custom function to construct vector of programs
     auto exe = poplar::compileGraph(graph, programs);
     poplar::Engine engine(std::move(exe));
@@ -63,8 +64,8 @@ int main (int argc, char** argv) {
 
     // Report
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start);
-    double wall_time = 1e-9*diff.count();
-    print_results(options, wall_time);
+    options.wall_time = 1e-9*diff.count();
+    print_results(options);
 
     // End of try block
   } catch (const std::exception &e) {
