@@ -84,11 +84,11 @@ void test_upper_dt(Options &options) {
     );
 }
 
-void print_results(Options &options, double wall_time) {
+void print_results(Options &options) {
   // Calculate metrics
   double mesh_volume = (double) options.height * (double) options.width * (double) options.depth;
   double flops_per_element = 29.0;
-  double flops = mesh_volume * (double) options.num_iterations * flops_per_element / wall_time;
+  double flops = mesh_volume * (double) options.num_iterations * flops_per_element / options.wall_time;
   double tflops = flops*1e-12;
 
   std::cout 

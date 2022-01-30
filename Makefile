@@ -4,28 +4,33 @@ CPPFLAGS = -std=c++20
 CXXFLAGS = -O3
 POPXXFLAGS = -O3 -target=ipu2
 LDLIBS = -lpoplar -lboost_program_options
-TARGETS = main codelets.gp
-SOURCES = main.cpp
 SRCDIR = src
+OBJDIR = obj
+BINDIR = bin
 INCDIR = -I./include
 SRC := $(wildcard $(SRCDIR)/*.cpp)
-OBJ	:= $(SRC:$(SRCDIR)/%.cpp=%.o)
+SRC := $(filter-out src/codelets.cpp, $(SRC))
+OBJ	:= $(SRC:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
+TARGETS = $(BINDIR)/main $(OBJDIR)/codelets.gp
 
 all: $(TARGETS)
 
-# Primary binary: compilation
-main: $(OBJ)
+# compiling main binary 
+$(BINDIR)/main: $(OBJ) 
+	@mkdir -p $(BINDIR)
 	$(CXX) $+ $(LDLIBS) -o $@
 
-# Object file and dependencies
+# linking object files
 .INTERMEDIATE: $(OBJ)
-%.o: $(SRCDIR)/%.cpp
+$(OBJDIR)/%.o: $(SRCDIR)/%.cpp
+	@mkdir -p $(OBJDIR)
 	$(CXX) $(INCDIR) -c $+ $(LDLIBS) -o $@
 
-# Codelet compilation with popc
-%.gp: %.cpp
+# pre-compiling codelet using popc
+$(OBJDIR)/codelets.gp: $(SRCDIR)/codelets.cpp
+	@mkdir -p $(OBJDIR)
 	$(POPC) $(POPXXFLAGS) $+ -o $@
 
 .PHONY: clean
 clean:
-	$(RM) $(TARGETS)
+	$(RM) $(TARGETS) $(OBJ)

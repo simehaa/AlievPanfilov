@@ -11,4 +11,4 @@ unsigned block_size(unsigned id, unsigned p, unsigned n);
 std::size_t volume(std::vector<std::size_t> shape);
 void work_division(Options &options);
 void test_upper_dt(Options &options);
-void print_results(Options &options, double wall_time);
+void print_results(Options &options);

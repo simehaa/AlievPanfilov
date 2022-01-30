@@ -3,13 +3,12 @@
 report
 slurm
 data
+obj
+bin
 
 # Compiled Object files
 *.o
 *.gp
 
 # Executables
-*.exe
-*.out
-*.app
-main
+*main
