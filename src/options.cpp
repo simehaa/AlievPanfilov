@@ -13,7 +13,7 @@ Options parse_options(int argc, char** argv) {
 	)
 	(
 		"num-iterations",
-		po::value<std::size_t>(&options.num_iterations)->default_value(10000),
+		po::value<std::size_t>(&options.num_iterations)->default_value(2),
 		"PDE: number of iterations to execute on grid."
 	)
 	(

@@ -62,7 +62,7 @@ int main (int argc, char** argv) {
     auto stop = std::chrono::steady_clock::now();
     engine.run(2); // Stream of results
 
-    test_against_cpu(initial_e, initial_r, ipu_e, ipu_r, &options);
+    test_against_cpu(initial_e, initial_r, ipu_e, ipu_r, options);
 
     // Report
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start);
