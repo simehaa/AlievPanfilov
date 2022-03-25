@@ -70,6 +70,94 @@ void work_division(Options &options) {
   }
 }
 
+void test_against_cpu(
+  std::vector<float> initial_e, 
+  std::vector<float> initial_r, 
+  const std::vector<float> ipu_e, 
+  const std::vector<float> ipu_r, 
+  Options &options
+) {
+  // Test against CPU code
+  std::size_t h = options.height;
+  std::size_t w = options.width;
+  std::size_t d = options.depth;
+  std::size_t hp = h + 2;
+  std::size_t wp = w + 2;
+  std::size_t dp = d + 2;
+
+  std::size_t volume = h*w*d;
+  std::size_t padded_volume = hp*wp*dp;
+  std::vector<float> cpu_e(padded_volume);
+  std::vector<float> cpu_e_temp(volume);
+  std::vector<float> cpu_r(volume);
+  const float d_dx2 = options.delta/(options.dx*options.dx);
+  const float b_plus_1 = options.b + 1;
+  float e_center;
+
+  // Initialize cpu_e/cpu_r
+  for (std::size_t x = 1; x < h + 1; ++x) {
+    for (std::size_t y = 1; y < w + 1; ++y) {
+      for (std::size_t z = 1; z < d + 1; ++z) {
+        cpu_e[index(x,y,z,wp,dp)] = initial_e[index(x-1,y-1,z-1,w,d)];
+        cpu_r[index(x-1,y-1,z-1,w,d)] = initial_r[index(x-1,y-1,z-1,w,d)];
+      }
+    }
+  }
+
+  // Perform PDE model
+  for (std::size_t t = 0; t < options.num_iterations; ++t) {
+    for (std::size_t x = 1; x < h + 1; ++x) {
+      for (std::size_t y = 1; y < w + 1; ++y) {
+        for (std::size_t z = 1; z < d + 1; ++z) {
+          e_center = cpu_e[index(x,y,z,wp,dp)];
+
+          // New e_out_center
+          cpu_e_temp[index(x-1,y-1,z-1,w,d)] = e_center + options.dt*(
+            d_dx2*(-6*e_center + 
+              cpu_e[index(x-1,y,z,wp,dp)] + cpu_e[index(x+1,y,z,wp,dp)] +
+              cpu_e[index(x,y-1,z,wp,dp)] + cpu_e[index(x,y+1,z,wp,dp)] +
+              cpu_e[index(x,y,z-1,wp,dp)] + cpu_e[index(x,y,z+1,wp,dp)]
+            ) 
+            - options.k*e_center*(e_center - options.a)*(e_center - 1) 
+            - e_center*cpu_r[index(x-1,y-1,z-1,w,d)]
+          );
+
+          // New r_center
+          cpu_r[index(x-1,y-1,z-1,w,d)] += options.dt*(
+            (-options.epsilon - options.my1*cpu_r[index(x-1,y-1,z-1,w,d)]/(options.my2 + e_center))*
+            (cpu_r[index(x-1,y-1,z-1,w,d)] + options.k*e_center*(e_center - b_plus_1))
+          );
+        }
+      }
+    }
+    // re-update cpu_e from cpu_e_temp
+    for (std::size_t x = 1; x < h + 1; ++x) {
+      for (std::size_t y = 1; y < w + 1; ++y) {
+        for (std::size_t z = 1; z < d + 1; ++z) {
+          cpu_e[index(x,y,z,wp,dp)] = cpu_e_temp[index(x-1,y-1,z-1,w,d)];
+        }
+      }
+    }
+  }
+
+  // Evaluate MSE
+  double e_error, r_error, e_MSE=0, r_MSE=0;
+  double scale = 1.0 / (double) volume;
+  for (std::size_t x = 1; x < h + 1; ++x) {
+    for (std::size_t y = 1; y < w + 1; ++y) {
+      for (std::size_t z = 1; z < d + 1; ++z) {
+        e_error = ipu_e[index(x-1,y-1,z-1,w,d)] - cpu_e[index(x,y,z,wp,dp)];
+        r_error = ipu_r[index(x-1,y-1,z-1,w,d)] - cpu_r[index(x-1,y-1,z-1,w,d)];
+        e_MSE += scale*e_error*e_error;
+        r_MSE += scale*r_error*r_error;
+      }
+    }
+  }
+  std::cout
+    << "e_MSE = " << e_MSE << "\n" 
+    << "r_MSE = " << r_MSE << "\n";
+}
+
 void test_upper_dt(Options &options) {
   float ka = options.k*options.a;
   float k_1_a = options.k*(1 - options.a);

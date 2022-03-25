@@ -19,8 +19,8 @@ int main (int argc, char** argv) {
     std::size_t w = options.width;
     std::size_t d = options.depth;
     std::size_t volume = h*w*d;
-    std::vector<float> host_e(volume);
-    std::vector<float> host_r(volume);
+    std::vector<float> initial_e(volume);
+    std::vector<float> initial_r(volume);
     std::vector<float> ipu_e(volume); 
     std::vector<float> ipu_r(volume); 
 
@@ -30,8 +30,8 @@ int main (int argc, char** argv) {
     for (std::size_t x = 0; x < h; ++x) {
       for (std::size_t y = 0; y < w; ++y) {
         for (std::size_t z = 0; z < d; ++z) {
-          host_e[index(x,y,z,w,d)] = (y < w/2) ? 0.0 : 1.0;
-          host_r[index(x,y,z,w,d)] = (x < h/2) ? 1.0 : 0.0;
+          initial_e[index(x,y,z,w,d)] = (y < w/2) ? 0.0 : 1.0;
+          initial_r[index(x,y,z,w,d)] = (x < h/2) ? 1.0 : 0.0;
         }
       }
     }
@@ -49,8 +49,8 @@ int main (int argc, char** argv) {
     auto programs = createIpuPrograms(graph, options); // Custom function to construct vector of programs
     auto exe = poplar::compileGraph(graph, programs);
     poplar::Engine engine(std::move(exe));
-    engine.connectStream("host_to_device_stream_e", &host_e[0], &host_e[volume]);
-    engine.connectStream("host_to_device_stream_r", &host_r[0], &host_r[volume]);
+    engine.connectStream("host_to_device_stream_e", &initial_e[0], &initial_e[volume]);
+    engine.connectStream("host_to_device_stream_r", &initial_r[0], &initial_r[volume]);
     engine.connectStream("device_to_host_stream_e", &ipu_e[0], &ipu_e[volume]);
     engine.connectStream("device_to_host_stream_r", &ipu_r[0], &ipu_r[volume]);
     engine.load(device);
@@ -61,6 +61,8 @@ int main (int argc, char** argv) {
     engine.run(1); // Compute set execution
     auto stop = std::chrono::steady_clock::now();
     engine.run(2); // Stream of results
+
+    test_against_cpu(initial_e, initial_r, ipu_e, ipu_r, options);
 
     // Report
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start);

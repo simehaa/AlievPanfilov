@@ -23,7 +23,9 @@ struct Options {
 	std::size_t tiles_per_ipu = 0;
 	std::size_t num_tiles_available = 0;
 	std::vector<std::size_t> splits = {0,0,0};
-	std::vector<std::size_t> smallest_slice = {std::numeric_limits<size_t>::max(),1,1};
+	std::vector<std::size_t> smallest_slice = {
+		std::numeric_limits<size_t>::max(),1,1
+	};
 	std::vector<std::size_t> largest_slice = {0,0,0};
 	double wall_time;
 };
