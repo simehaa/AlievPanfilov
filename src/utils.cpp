@@ -33,9 +33,9 @@ void work_division(Options &options) {
    *    this function chooses nh, nw, nd, so that the surface area is minimized.
    */
   float smallest_surface_area = std::numeric_limits<float>::max();
-  std::size_t height = (options.height - 2);
-  std::size_t width = (options.width - 2);
-  std::size_t depth = (options.depth - 2) / options.num_ipus;
+  std::size_t height = options.height;
+  std::size_t width = options.width;
+  std::size_t depth = options.depth / options.num_ipus;
   std::size_t tile_count = options.num_tiles_available / options.num_ipus;
   for (std::size_t i = 1; i <= tile_count; ++i) {
     if (tile_count % i == 0) { // then i is a factor
@@ -46,7 +46,7 @@ void work_division(Options &options) {
           std::size_t k = other_factor/j; // and k is the third factor
           std::vector<std::size_t> splits = {i,j,k}; 
           if (i*j*k != tile_count) {
-            throw std::runtime_error("workDivision(), factorization does not work.");
+            throw std::runtime_error("work_division(), factorization does not work.");
           }
           for (std::size_t l = 0; l < 3; ++l) {
             for (std::size_t m = 0; m < 3; ++m) {
@@ -180,7 +180,7 @@ void print_results(Options &options) {
   double tflops = flops*1e-12;
 
   std::cout 
-    <<   "3D Aliev-Panfilov model"
+    << "3D Aliev-Panfilov model"
     << "\n-----------------------"
     << "\nNo. IPUs           = " << options.num_ipus
     << "\nNo. Tiles          = " << options.num_tiles_available
