@@ -32,9 +32,9 @@ poplar::ComputeSet createComputeSet(
   unsigned nh = options.splits[0]; // No. partitions along height per IPU mesh
   unsigned nw = options.splits[1]; // No. partitions along width per IPU mesh
   unsigned nd = options.splits[2]; // No. partitions along depth per IPU mesh
-  unsigned nwh = 1; // No. partitions along height per tile
+  unsigned nwh = 3; // No. partitions along height per tile
   unsigned nww = 2; // No. partitions along width per tile
-  unsigned nwd = 3; // No. partitions along depth per tile
+  unsigned nwd = 1; // No. partitions along depth per tile
 
   for (std::size_t ipu = 0; ipu < options.num_ipus; ++ipu) {
 
