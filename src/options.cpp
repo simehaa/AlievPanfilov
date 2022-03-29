@@ -18,17 +18,17 @@ Options parse_options(int argc, char** argv) {
 	)
 	(
 		"height",
-		po::value<std::size_t>(&options.height)->default_value(300),
+		po::value<std::size_t>(&options.height)->default_value(200),
 		"Heigth of a custom 3D grid"
 	)
 	(
 		"width",
-		po::value<std::size_t>(&options.width)->default_value(300), 
+		po::value<std::size_t>(&options.width)->default_value(200), 
 		"Width of a custom 3D grid"
 	)
 	(
 		"depth",
-		po::value<std::size_t>(&options.depth)->default_value(300),
+		po::value<std::size_t>(&options.depth)->default_value(200),
 		"Depth of a custom 3D grid"
 	)
 	(
@@ -75,6 +75,11 @@ Options parse_options(int argc, char** argv) {
 		"delta",
 		po::value<float>(&options.delta)->default_value(5.0e-5),
 		"A constant in the forward Euler Aliev-Panfilov equations."
+	)
+	(
+		"cpu-test",
+		po::bool_switch(&options.cpu)->default_value(false),
+		"Whether to test (MSE of meshes) against a slow CPU code."
 	);
 
 	po::variables_map vm;

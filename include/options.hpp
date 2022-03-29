@@ -28,6 +28,7 @@ struct Options {
 	};
 	std::vector<std::size_t> largest_slice = {0,0,0};
 	double wall_time;
+	bool cpu = false;
 };
 
 Options parse_options(int argc, char** argv);
