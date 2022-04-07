@@ -1,6 +1,6 @@
 # Folders
 .vscode
-*report*
+reports
 slurm
 data
 obj
@@ -10,11 +10,11 @@ bin
 *.o
 *.gp
 
-# Report files
+# Report files (should be in ./reports, but just in case)
 profile.pop*
 poplar_profile*
 debug.cbor
 archive.a
 
-# Executables
+# Executables (should be in ./bin, but just in case)
 *main
