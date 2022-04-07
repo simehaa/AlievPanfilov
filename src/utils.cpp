@@ -88,6 +88,12 @@ void test_against_cpu(
   std::size_t volume = h*w*d;
   std::size_t padded_volume = hp*wp*dp;
   std::vector<float> cpu_e(padded_volume);
+  /* 
+   * Note, cpu_e_temp and cpu_r are not padded
+   * To access index [x,y,z] one must use width and depth
+   * Remember to use h,w,d (for height, width, depth, respectively) for these
+   * However, for cpu_e, use hp,wp,dp (height padded, width padded, depth padded)
+   */
   std::vector<float> cpu_e_temp(volume);
   std::vector<float> cpu_r(volume);
   const float d_dx2 = options.delta/(options.dx*options.dx);
@@ -95,9 +101,9 @@ void test_against_cpu(
   float e_center;
 
   // Initialize cpu_e/cpu_r
-  for (std::size_t x = 1; x < h + 1; ++x) {
-    for (std::size_t y = 1; y < w + 1; ++y) {
-      for (std::size_t z = 1; z < d + 1; ++z) {
+  for (std::size_t x = 1; x <= h; ++x) {
+    for (std::size_t y = 1; y <= w; ++y) {
+      for (std::size_t z = 1; z <= d; ++z) {
         cpu_e[index(x,y,z,wp,dp)] = initial_e[index(x-1,y-1,z-1,w,d)];
         cpu_r[index(x-1,y-1,z-1,w,d)] = initial_r[index(x-1,y-1,z-1,w,d)];
       }
@@ -106,10 +112,39 @@ void test_against_cpu(
 
   // Perform PDE model
   for (std::size_t t = 0; t < options.num_iterations; ++t) {
-    for (std::size_t x = 1; x < h + 1; ++x) {
-      for (std::size_t y = 1; y < w + 1; ++y) {
-        for (std::size_t z = 1; z < d + 1; ++z) {
-          e_center = cpu_e[index(x,y,z,wp,dp)];
+    /*
+     * Boundary condition: net-zero gradient
+     * Copy inner neighbour surfaces to padded boundaries
+     * Each dimention goes from 0, ..., h-1 (or w or d)
+     * Padded dimentions goes from 0, ..., h+1 (or w or d)
+     * Immediate inner surfaces are at index 2 and h-1 (or w or d)
+     * The destiation index for those surfaces are at index 0 and h+1 (or w or d)
+     */
+    for (std::size_t x = 1; x <= h; ++x) {
+      for (std::size_t y = 1; y <= w; ++y) {
+        cpu_e[index(x,y,0,wp,dp)] = cpu_e[index(x,y,2,wp,dp)]; // front surface
+        cpu_e[index(x,y,d+1,wp,dp)] = cpu_e[index(x,y,d-1,wp,dp)]; // back surface
+      }
+    }
+    for (std::size_t x = 1; x <= h; ++x) {
+      for (std::size_t z = 1; z <= d; ++z) {
+        cpu_e[index(x,0,z,wp,dp)] = cpu_e[index(x,2,z,wp,dp)]; // left surface
+        cpu_e[index(x,w+1,z,wp,dp)] = cpu_e[index(x,w-1,z,wp,dp)]; // right surface
+      }
+    }
+    for (std::size_t y = 1; y <= w; ++y) {
+      for (std::size_t z = 1; z <= d; ++z) {
+        cpu_e[index(0,y,z,wp,dp)] = cpu_e[index(2,y,z,wp,dp)]; // top surface
+        cpu_e[index(h+1,y,z,wp,dp)] = cpu_e[index(h-1,y,z,wp,dp)]; // bottom surface
+      }
+    }
+
+    // PDE computation by sliding stencil over inner volume 
+    // (inner volume of padded mesh corresponds to full volume of unpadded mesh)
+    for (std::size_t x = 1; x <= h; ++x) {
+      for (std::size_t y = 1; y <= w; ++y) {
+        for (std::size_t z = 1; z <= d; ++z) {
+          e_center = cpu_e[index(x,y,z,wp,dp)]; // reusable variable
 
           // New e_out_center
           cpu_e_temp[index(x-1,y-1,z-1,w,d)] = e_center + options.dt*(
@@ -130,10 +165,11 @@ void test_against_cpu(
         }
       }
     }
+
     // re-update cpu_e from cpu_e_temp
-    for (std::size_t x = 1; x < h + 1; ++x) {
-      for (std::size_t y = 1; y < w + 1; ++y) {
-        for (std::size_t z = 1; z < d + 1; ++z) {
+    for (std::size_t x = 1; x <= h; ++x) {
+      for (std::size_t y = 1; y <= w; ++y) {
+        for (std::size_t z = 1; z <= d; ++z) {
           cpu_e[index(x,y,z,wp,dp)] = cpu_e_temp[index(x-1,y-1,z-1,w,d)];
         }
       }

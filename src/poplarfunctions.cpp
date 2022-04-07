@@ -48,16 +48,6 @@ poplar::ComputeSet createComputeSet(
     unsigned ipu_z_hi = block_high(ipu, options.num_ipus, options.depth) + offset_back;
     unsigned ipu_depth = ipu_z_hi - ipu_z_lo;
 
-    // std::cout 
-    //   << "{"
-    //   << ipu_x_lo << ","
-    //   << ipu_y_lo << ","
-    //   << ipu_z_lo
-    //   << "} {"
-    //   << ipu_x_hi << ","
-    //   << ipu_y_hi << ","
-    //   << ipu_z_hi << "}\n";
-
     auto e_in_ipu_slice = e_in.slice(
       {ipu_x_lo, ipu_y_lo, ipu_z_lo}, 
       {ipu_x_hi, ipu_y_hi, ipu_z_hi}
@@ -88,18 +78,6 @@ poplar::ComputeSet createComputeSet(
           unsigned tile_width = block_size(tile_y, nw, options.width);
           unsigned tile_depth = block_size(tile_z, nd, ipu_depth-2);
 
-          // if (ipu == 0 && tile_x == tile_y && tile_y == tile_z) {
-          //   std::cout 
-          //   << "{"
-          //   << tile_x_lo << ","
-          //   << tile_y_lo << ","
-          //   << tile_z_lo
-          //   << "} {"
-          //   << tile_x_hi << ","
-          //   << tile_y_hi << ","
-          //   << tile_z_hi << "}\n";
-          // }
-
           // Record some metrics
           std::vector<std::size_t> shape = {tile_height, tile_width, tile_depth};
           if (volume(shape) < volume(options.smallest_slice))
@@ -129,18 +107,6 @@ poplar::ComputeSet createComputeSet(
                 // Vertex' e_in slice (notice padding wrt to both e_out and r)
                 auto e_in_slice = e_in_ipu_slice.slice({x_lo-1, y_lo-1, z_lo-1}, {x_hi+1, y_hi+1, z_hi+1});
 
-                // if (ipu == 0 && tile_x == tile_y && tile_y == tile_z) {
-                //   std::cout 
-                //   << "{"
-                //   << x_lo << ","
-                //   << y_lo << ","
-                //   << z_lo
-                //   << "} {"
-                //   << x_hi << ","
-                //   << y_hi << ","
-                //   << z_hi << "}\n";
-                // }
-
                 // Assign vertex to graph 
                 // (six vertices per tile, which will be solved by six different threads)
                 auto v = graph.addVertex(compute_set, "AlievPanfilovVertex");
@@ -169,6 +135,45 @@ poplar::ComputeSet createComputeSet(
   }
 
   return compute_set;
+}
+
+poplar::program::Program copyForBoundaryCondition(
+  poplar::Tensor &e,
+  Options &options,
+  const std::string& compute_set_name) {
+  // "rename" variables to shorter names
+  std::size_t h = options.height;
+  std::size_t w = options.width;
+  std::size_t d = options.depth;
+
+  auto copy_all_surfaces = poplar::program::Sequence({
+    poplar::program::Copy(
+      e.slice({2,1,1},{2+1,w+1,d+1}), // from inner top
+      e.slice({0,1,1},{0+1,w+1,d+1}) // to outer top
+    ),
+    poplar::program::Copy(
+      e.slice({h-1,1,1},{h-1+1,w+1,d+1}), // from inner bottom
+      e.slice({h+1,1,1},{h+1+1,w+1,d+1}) // to outer bottom
+    ),
+    poplar::program::Copy(
+      e.slice({1,1,2},{h+1,w+1,2+1}), // from inner front
+      e.slice({1,1,0},{h+1,w+1,0+1}) // to outer front
+    ),
+    poplar::program::Copy(
+      e.slice({1,1,d-1},{h+1,w+1,d-1+1}), // from inner back
+      e.slice({1,1,d+1},{h+1,w+1,d+1+1}) // to outer back
+    ),
+    poplar::program::Copy(
+      e.slice({1,2,1},{h+1,2+1,d+1}), // from inner left
+      e.slice({1,0,1},{h+1,0+1,d+1}) // to outer left
+    ),
+    poplar::program::Copy(
+      e.slice({1,w-1,1},{h+1,w-1+1,d+1}), // from inner right
+      e.slice({1,w+1,1},{h+1,w+1+1,d+1}) // to outer right
+    )
+  });
+
+  return copy_all_surfaces;
 }
 
 std::vector<poplar::program::Program> createIpuPrograms(
@@ -215,18 +220,6 @@ std::vector<poplar::program::Program> createIpuPrograms(
           std::size_t y_hi = block_high(tile_y, options.splits[1], options.width) + offset_right;
           std::size_t z_hi = block_high(tile_z, options.splits[2], ipu_depth-2) + inter_offset_back;
 
-          // if (tile_x == tile_y && tile_y == tile_z) {
-          //   std::cout 
-          //   << "{"
-          //   << x_lo << ","
-          //   << y_lo << ","
-          //   << z_lo
-          //   << "} {"
-          //   << x_hi << ","
-          //   << y_hi << ","
-          //   << z_hi << "}\n";
-          // }
-
           auto tile_slice = ipu_slice.slice({x_lo, y_lo, z_lo}, {x_hi, y_hi, z_hi});
           graph.setTileMapping(tile_slice, tile_id);
         }
@@ -262,26 +255,35 @@ std::vector<poplar::program::Program> createIpuPrograms(
     })
   );
 
-  // Create compute sets
+  // Define (1) compute sets, (2) prepare boundary copies, and (3) full iteration steps
   auto compute_set_b_to_a = createComputeSet(graph, e_b, e_a, r, options, "compute_set_b_to_a");
   auto compute_set_a_to_b = createComputeSet(graph, e_a, e_b, r, options, "compute_set_a_to_b");
-  poplar::program::Sequence execute_this_compute_set;
+  auto prepare_a_boundary = copyForBoundaryCondition(e_a, options, "prepare_a_boundary");
+  auto prepare_b_boundary = copyForBoundaryCondition(e_b, options, "prepare_b_boundary");
+  auto iteration_a_to_b = poplar::program::Sequence({
+    prepare_a_boundary, poplar::program::Execute(compute_set_a_to_b)
+  });
+  auto iteration_b_to_a = poplar::program::Sequence({
+    prepare_b_boundary, poplar::program::Execute(compute_set_b_to_a)
+  });
 
-  if (options.num_iterations % 2 == 1) { // if num_iterations is odd: add one extra iteration
-    execute_this_compute_set.add(poplar::program::Execute(compute_set_a_to_b));
+  poplar::program::Sequence all_iterations;
+
+  // If num_iterations is odd: add one extra iteration
+  if (options.num_iterations % 2 == 1) { 
+    all_iterations.add(iteration_a_to_b);
   }
 
-  // add iterations 
-  execute_this_compute_set.add(
+  // Add remaining iterations 
+  all_iterations.add(
     poplar::program::Repeat(
       options.num_iterations/2,
       poplar::program::Sequence({
-        poplar::program::Execute(compute_set_b_to_a),
-        poplar::program::Execute(compute_set_a_to_b)
+        iteration_b_to_a, iteration_a_to_b
       })
     )
   );
-  programs.push_back(execute_this_compute_set);
+  programs.push_back(all_iterations);
 
   // Copy results back to host (e_b holds last e)
   programs.push_back(
