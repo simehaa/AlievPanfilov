@@ -14,6 +14,10 @@ struct Options {
 	float k;
 	float dx;
 	float dt;
+	float b_plus_1; // function of b
+	float dtk; // function of dt and k
+	float lambda; // function of delta, dx, dt
+	float gamma; // function of delta, dx, dt
 	std::size_t height;
 	std::size_t width;
 	std::size_t depth;
@@ -28,6 +32,7 @@ struct Options {
 	};
 	std::vector<std::size_t> largest_slice = {0,0,0};
 	double wall_time;
+	double total_memory_avail_MB;
 	bool cpu = false;
 };
 

@@ -96,9 +96,7 @@ void test_against_cpu(
    */
   std::vector<float> cpu_e_temp(volume);
   std::vector<float> cpu_r(volume);
-  const float d_dx2 = options.delta/(options.dx*options.dx);
-  const float b_plus_1 = options.b + 1;
-  float e_center;
+  float e_center, r_center;
 
   // Initialize cpu_e/cpu_r
   for (std::size_t x = 1; x <= h; ++x) {
@@ -145,22 +143,21 @@ void test_against_cpu(
       for (std::size_t y = 1; y <= w; ++y) {
         for (std::size_t z = 1; z <= d; ++z) {
           e_center = cpu_e[index(x,y,z,wp,dp)]; // reusable variable
+          r_center = cpu_r[index(x-1,y-1,z-1,w,d)];
 
           // New e_out_center
-          cpu_e_temp[index(x-1,y-1,z-1,w,d)] = e_center + options.dt*(
-            d_dx2*(-6*e_center + 
+          cpu_e_temp[index(x-1,y-1,z-1,w,d)] = options.lambda*(
               cpu_e[index(x-1,y,z,wp,dp)] + cpu_e[index(x+1,y,z,wp,dp)] +
               cpu_e[index(x,y-1,z,wp,dp)] + cpu_e[index(x,y+1,z,wp,dp)] +
               cpu_e[index(x,y,z-1,wp,dp)] + cpu_e[index(x,y,z+1,wp,dp)]
-            ) 
-            - options.k*e_center*(e_center - options.a)*(e_center - 1) 
-            - e_center*cpu_r[index(x-1,y-1,z-1,w,d)]
-          );
+            ) + options.gamma*e_center
+            - options.dtk*e_center*(e_center - options.a)*(e_center - 1) 
+            - options.dt*e_center*r_center;
 
           // New r_center
-          cpu_r[index(x-1,y-1,z-1,w,d)] += options.dt*(
-            (-options.epsilon - options.my1*cpu_r[index(x-1,y-1,z-1,w,d)]/(options.my2 + e_center))*
-            (cpu_r[index(x-1,y-1,z-1,w,d)] + options.k*e_center*(e_center - b_plus_1))
+          cpu_r[index(x-1,y-1,z-1,w,d)] -= options.dt*(
+            (options.epsilon + options.my1*r_center/(options.my2 + e_center))*
+            (r_center + options.k*e_center*(e_center - options.b_plus_1))
           );
         }
       }
@@ -190,17 +187,18 @@ void test_against_cpu(
     }
   }
   std::cout
+    << "Test IPU results vs. CPU results\n"
+    << "--------------------------------\n"
     << "e_MSE = " << e_MSE << "\n" 
-    << "r_MSE = " << r_MSE << "\n";
+    << "r_MSE = " << r_MSE << "\n\n";
 }
 
 void test_upper_dt(Options &options) {
   float ka = options.k*options.a;
   float k_1_a = options.k*(1 - options.a);
   float max = (ka > k_1_a) ? ka : k_1_a;
-  float lambda = options.delta/(options.dx*options.dx);
-  float r_plus = options.k*(options.b+1)*(options.b+1)/4.0;
-  float upper_bound_dt = 1.0/(4*lambda + max + r_plus);
+  float r_plus = options.k*options.b_plus_1*options.b_plus_1/4.0;
+  float upper_bound_dt = 1.0/(4*options.lambda + max + r_plus);
   if (options.dt > upper_bound_dt) 
     throw std::runtime_error(
       "Forward Euler method is not stable, because dt ("+std::to_string(options.dt)+
@@ -208,23 +206,26 @@ void test_upper_dt(Options &options) {
     );
 }
 
-void print_results(Options &options) {
+void print_results_and_options(Options &options) {
   // Calculate metrics
   double mesh_volume = (double) options.height * (double) options.width * (double) options.depth;
-  double flops_per_element = 29.0;
+  double flops_per_element = 28.0;
   double flops = mesh_volume * (double) options.num_iterations * flops_per_element / options.wall_time;
   double tflops = flops*1e-12;
+  double padded_mesh = (double) (options.height + 2) * (double) (options.width + 2) * (double) (options.depth + 2);
+  double minimum_MB = (2*padded_mesh + mesh_volume)*4*1e-6; // 4 bytes per element and converted to _mega_ (bytes)
 
   std::cout 
-    << "3D Aliev-Panfilov model"
-    << "\n-----------------------"
-    << "\nNo. IPUs           = " << options.num_ipus
-    << "\nNo. Tiles          = " << options.num_tiles_available
-    << "\nTotal Grid         = " << options.height << "*" << options.width << "*" << options.depth << " = "
-                                 << mesh_volume*1e-6 << " million elements"
-    << "\nSmallest Sub-grid  = " << options.smallest_slice[0] << "*" << options.smallest_slice[1] << "*" << options.smallest_slice[2] 
-    << "\nLargest Sub-grid   = " << options.largest_slice[0] << "*" << options.largest_slice[1] << "*" << options.largest_slice[2] 
-    << "\nNo. Iterations     = " << options.num_iterations
-    << "\nTFLOPS             = " << std::setprecision(4) << tflops
-    << "\n";
+    << "3D Aliev-Panfilov model\n"
+    << "-----------------------\n"
+    << "No. IPUs = " << options.num_ipus << "\n"
+    << "No. tiles = " << options.num_tiles_available << "\n"
+    << "Total mesh = " << options.height << "*" << options.width << "*" << options.depth << " elements\n"
+    << "3 Tensor's on-tile memory usage = " << minimum_MB << " MB\n"
+    << "Available on-tile memory = " << options.total_memory_avail_MB << " MB\n" 
+    << "Smallest tile partition = " << options.smallest_slice[0] << "*" << options.smallest_slice[1] << "*" << options.smallest_slice[2]  << " elements\n"
+    << "Largest tile partition = " << options.largest_slice[0] << "*" << options.largest_slice[1] << "*" << options.largest_slice[2]  << " elements\n"
+    << "No. iterations = " << options.num_iterations << "\n"
+    << "Wall Time = " << std::setprecision(5) << options.wall_time << " s\n"
+    << "Computational throughput = " << std::setprecision(5) << tflops << " TFLOPS\n\n";
 }

@@ -19,7 +19,7 @@ poplar::Device get_device(std::size_t n) {
   throw std::runtime_error("No hardware device available.");
 }
 
-poplar::ComputeSet createComputeSet(
+poplar::ComputeSet create_compute_set(
   poplar::Graph &graph,
   poplar::Tensor &e_in,
   poplar::Tensor &e_out,
@@ -116,15 +116,16 @@ poplar::ComputeSet createComputeSet(
                 graph.setInitialValue(v["worker_height"], x_hi - x_lo);
                 graph.setInitialValue(v["worker_width"], y_hi - y_lo);
                 graph.setInitialValue(v["worker_depth"], z_hi - z_lo);
-                graph.setInitialValue(v["delta"], options.delta);
                 graph.setInitialValue(v["epsilon"], options.epsilon);
                 graph.setInitialValue(v["my1"], options.my1);
                 graph.setInitialValue(v["my2"], options.my2);
-                graph.setInitialValue(v["dx"], options.dx);
                 graph.setInitialValue(v["dt"], options.dt);
                 graph.setInitialValue(v["k"], options.k);
                 graph.setInitialValue(v["a"], options.a);
-                graph.setInitialValue(v["b"], options.b);
+                graph.setInitialValue(v["lambda"], options.lambda);
+                graph.setInitialValue(v["gamma"], options.gamma);
+                graph.setInitialValue(v["dtk"], options.dtk);
+                graph.setInitialValue(v["b_plus_1"], options.b_plus_1);
                 graph.setTileMapping(v, tile_id);
               }
             }
@@ -176,7 +177,7 @@ poplar::program::Program copyForBoundaryCondition(
   return copy_all_surfaces;
 }
 
-std::vector<poplar::program::Program> createIpuPrograms(
+std::vector<poplar::program::Program> create_ipu_programs(
   poplar::Graph &graph, 
   Options &options) {
 
@@ -256,8 +257,8 @@ std::vector<poplar::program::Program> createIpuPrograms(
   );
 
   // Define (1) compute sets, (2) prepare boundary copies, and (3) full iteration steps
-  auto compute_set_b_to_a = createComputeSet(graph, e_b, e_a, r, options, "compute_set_b_to_a");
-  auto compute_set_a_to_b = createComputeSet(graph, e_a, e_b, r, options, "compute_set_a_to_b");
+  auto compute_set_b_to_a = create_compute_set(graph, e_b, e_a, r, options, "compute_set_b_to_a");
+  auto compute_set_a_to_b = create_compute_set(graph, e_a, e_b, r, options, "compute_set_a_to_b");
   auto prepare_a_boundary = copyForBoundaryCondition(e_a, options, "prepare_a_boundary");
   auto prepare_b_boundary = copyForBoundaryCondition(e_b, options, "prepare_b_boundary");
   auto iteration_a_to_b = poplar::program::Sequence({

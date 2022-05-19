@@ -18,4 +18,4 @@ void test_against_cpu(
   const std::vector<float> ipu_r, 
   Options &options
 );
-void print_results(Options &options);
+void print_results_and_options(Options &options);

@@ -13,7 +13,7 @@ Options parse_options(int argc, char** argv) {
 	)
 	(
 		"num-iterations",
-		po::value<std::size_t>(&options.num_iterations)->default_value(2),
+		po::value<std::size_t>(&options.num_iterations)->default_value(10),
 		"PDE: number of iterations to execute on grid."
 	)
 	(
@@ -68,7 +68,7 @@ Options parse_options(int argc, char** argv) {
 	)
 	(
 		"dx",
-		po::value<float>(&options.dx)->default_value(0.000143),
+		po::value<float>(&options.dx)->default_value(0.001),
 		"A constant in the forward Euler Aliev-Panfilov equations."
 	)
 	(
@@ -84,11 +84,17 @@ Options parse_options(int argc, char** argv) {
 
 	po::variables_map vm;
 	po::store(po::parse_command_line(argc, argv, desc), vm);
-	
+
 	if (vm.count("help")) {
 		std::cout << desc << "\n";
 		throw std::runtime_error("Show help");
 	}
 	po::notify(vm);
+
+	options.b_plus_1 = options.b + 1; // function of b
+	options.dtk = options.dt*options.k; // function of dt and k
+	options.lambda = options.delta*options.dt/(options.dx * options.dx); // function of delta, dx, dt
+	options.gamma = 1 - 6*options.lambda; // function of delta, dx, dt
+
 	return options;
 }
