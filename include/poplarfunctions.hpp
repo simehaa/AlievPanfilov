@@ -9,7 +9,7 @@
 #include "utils.hpp"
 
 poplar::Device get_device(std::size_t n);
-poplar::ComputeSet createComputeSet(
+poplar::ComputeSet create_compute_set(
   poplar::Graph &graph,
   poplar::Tensor &e_in,
   poplar::Tensor &e_out,
@@ -17,7 +17,7 @@ poplar::ComputeSet createComputeSet(
   Options &options,
   const std::string& compute_set_name
 );
-std::vector<poplar::program::Program> createIpuPrograms(
+std::vector<poplar::program::Program> create_ipu_programs(
   poplar::Graph &graph, 
   Options &options
 );
