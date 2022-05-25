@@ -14,6 +14,27 @@ int main (int argc, char** argv) {
     auto options = parse_options(argc, argv);
     test_upper_dt(options);
 
+    // Attach to IPU device
+    auto device = get_device(options.num_ipus);
+    auto &target = device.getTarget();
+    options.num_tiles_available = target.getNumTiles();
+    options.tiles_per_ipu = target.getTilesPerIPU();
+
+    // Brute-force find optimal tile partition
+    // (minimized tile-to-tile communication volume)
+    options.tile_splits = work_division_3d(
+      options.height / options.ipu_splits[0],
+      options.width / options.ipu_splits[1],
+      options.depth / options.ipu_splits[2],
+      options.tiles_per_ipu
+    );
+
+    std::cout
+      << "IPUs: " << options.num_ipus << "\n"
+      << "Tiles per IPU: " << options.tiles_per_ipu << "\n"
+      << "IPU partitions: [" << options.ipu_splits[0] << "," << options.ipu_splits[1] << "," << options.ipu_splits[2] << "]\n"
+      << "Tile partitions: [" << options.tile_splits[0] << "," << options.tile_splits[1] << "," << options.tile_splits[2] << "]\n";
+
     // Initialize meshes
     std::size_t h = options.height;
     std::size_t w = options.width;
@@ -35,14 +56,6 @@ int main (int argc, char** argv) {
         }
       }
     }
-    
-    // Attach to IPU device
-    auto device = get_device(options.num_ipus);
-    auto &target = device.getTarget();
-    options.num_tiles_available = target.getNumTiles();
-    options.tiles_per_ipu = target.getTilesPerIPU();
-    options.total_memory_avail_MB = (double) target.getBytesPerTile() * options.num_tiles_available * 1e-6;
-    work_division(options);
     
     // Setup of programs, graph and engine
     poplar::Graph graph{target};

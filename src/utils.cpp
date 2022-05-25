@@ -1,23 +1,18 @@
 #include "utils.hpp"
 
-unsigned index(unsigned x, unsigned y, unsigned z, unsigned width, unsigned depth) {
+std::size_t index(std::size_t x, std::size_t y, std::size_t z, std::size_t width, std::size_t depth) {
 	// 1D index corresponding to a flattened 3D variable. 
   return (z) + (y)*(depth) + (x)*(width)*(depth);
 }
 
-unsigned block_low(unsigned id, unsigned p, unsigned n) {
+std::size_t block_low(std::size_t id, std::size_t p, std::size_t n) {
 	// low index of block id=0,...,p, when dividing the total length n into p pieces.
   return (id*n)/p; 
 }
 
-unsigned block_high(unsigned id, unsigned p, unsigned n) {
+std::size_t block_high(std::size_t id, std::size_t p, std::size_t n) {
 	// high index (non-inclusive) of block id=0,...,p, when dividing the total length n into p pieces.
   return block_low(id+1, p, n); 
-}
-
-unsigned block_size(unsigned id, unsigned p, unsigned n) {
-	// length of block id=0,...,p, when dividing the total length n into p pieces.
-  return block_high(id, p, n) - block_low(id, p, n); 
 }
 
 std::size_t volume(std::vector<std::size_t> shape) {
@@ -25,40 +20,40 @@ std::size_t volume(std::vector<std::size_t> shape) {
   return shape[0]*shape[1]*shape[2];
 }
 
-void work_division(Options &options) {
-  /* Function UPDATES options.splits
-   * 1) all tiles will be used, hence options.num_tiles_available must
-   *    previously be updated by using the target object
-   * 2) the average resulting slice will have shape [height/nh, width/nw, depth/nd'] and
-   *    this function chooses nh, nw, nd, so that the surface area is minimized.
+std::vector<std::size_t> work_division_3d(
+  std::size_t height,
+  std::size_t width,
+  std::size_t depth,
+  std::size_t num_partitions
+) {
+  /* 
+   * Find the partition configuration that minimizes surface area
+   * and uses num_partitions number of partitions.
    */
+  std::vector<std::size_t> splits = {0, 0, 0};
   float smallest_surface_area = std::numeric_limits<float>::max();
-  std::size_t height = options.height;
-  std::size_t width = options.width;
-  std::size_t depth = options.depth / options.num_ipus;
-  std::size_t tile_count = options.num_tiles_available / options.num_ipus;
-  for (std::size_t i = 1; i <= tile_count; ++i) {
-    if (tile_count % i == 0) { // then i is a factor
+  for (std::size_t i = 1; i <= num_partitions; ++i) {
+    if (num_partitions % i == 0) { // then i is a factor
       // Further, find two other factors, to obtain exactly three factors
-      std::size_t other_factor = tile_count/i;
+      std::size_t other_factor = num_partitions/i;
       for (std::size_t j = 1; j <= other_factor; ++j) {
         if (other_factor % j == 0) { // then j is a second factor
           std::size_t k = other_factor/j; // and k is the third factor
-          std::vector<std::size_t> splits = {i,j,k}; 
-          if (i*j*k != tile_count) {
+          std::vector<std::size_t> test_splits = {i,j,k}; 
+          if (i*j*k != num_partitions) {
             throw std::runtime_error("work_division(), factorization does not work.");
           }
           for (std::size_t l = 0; l < 3; ++l) {
             for (std::size_t m = 0; m < 3; ++m) {
               for (std::size_t n = 0; n < 3; ++n) {
                 if (l != m && l != n && m != n) {
-                  float slice_height = float(height)/float(splits[l]);
-                  float slice_width = float(width)/float(splits[m]);
-                  float slice_depth = float(depth)/float(splits[n]);
+                  float slice_height = float(height)/float(test_splits[l]);
+                  float slice_width = float(width)/float(test_splits[m]);
+                  float slice_depth = float(depth)/float(test_splits[n]);
                   float surface_area = 2.0*(slice_height*slice_width + slice_depth*slice_width + slice_depth*slice_height);
                   if (surface_area <= smallest_surface_area) {
                     smallest_surface_area = surface_area;
-                    options.splits = splits;
+                    splits = test_splits;
                   }
                 }
               }
@@ -68,6 +63,7 @@ void work_division(Options &options) {
       }
     }
   }
+  return splits;
 }
 
 void test_against_cpu(
@@ -213,7 +209,7 @@ void print_results_and_options(Options &options) {
   double flops = mesh_volume * (double) options.num_iterations * flops_per_element / options.wall_time;
   double tflops = flops*1e-12;
   double padded_mesh = (double) (options.height + 2) * (double) (options.width + 2) * (double) (options.depth + 2);
-  double minimum_MB = (2*padded_mesh + mesh_volume)*4*1e-6; // 4 bytes per element and converted to _mega_ (bytes)
+  double minimum_MB = (3*padded_mesh)*4e-6; // 3 tensors, 4 bytes per element, converted to MB
 
   std::cout 
     << "3D Aliev-Panfilov model\n"
@@ -221,11 +217,11 @@ void print_results_and_options(Options &options) {
     << "No. IPUs = " << options.num_ipus << "\n"
     << "No. tiles = " << options.num_tiles_available << "\n"
     << "Total mesh = " << options.height << "*" << options.width << "*" << options.depth << " elements\n"
-    << "3 Tensor's on-tile memory usage = " << minimum_MB << " MB\n"
-    << "Available on-tile memory = " << options.total_memory_avail_MB << " MB\n" 
+    << "Partitions = " << options.tile_splits[0] << "*" << options.tile_splits[1] << "*" << options.tile_splits[2] << "\n"
     << "Smallest tile partition = " << options.smallest_slice[0] << "*" << options.smallest_slice[1] << "*" << options.smallest_slice[2]  << " elements\n"
     << "Largest tile partition = " << options.largest_slice[0] << "*" << options.largest_slice[1] << "*" << options.largest_slice[2]  << " elements\n"
     << "No. iterations = " << options.num_iterations << "\n"
+    << "Tensors' on-tile memory usage = " << minimum_MB << " MB\n"
     << "Wall Time = " << std::setprecision(5) << options.wall_time << " s\n"
     << "Computational throughput = " << std::setprecision(5) << tflops << " TFLOPS\n\n";
 }

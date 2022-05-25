@@ -9,9 +9,9 @@ public:
   Vector<Input<Vector<float, VectorLayout::SPAN, 4, false>>> e_in;
   Vector<Output<Vector<float, VectorLayout::SPAN, 4, false>>> e_out;
   Vector<InOut<Vector<float, VectorLayout::SPAN, 4, false>>> r;
-  const unsigned worker_height;
-  const unsigned worker_width;
-  const unsigned worker_depth;
+  const std::size_t worker_height;
+  const std::size_t worker_width;
+  const std::size_t worker_depth;
   const float epsilon;
   const float my1;
   const float my2;
@@ -23,14 +23,14 @@ public:
   const float dtk; // dt*k
   const float b_plus_1; // b + 1
 
-  unsigned idx(unsigned x, unsigned y, unsigned w) {
+  std::size_t idx(std::size_t x, std::size_t y, std::size_t w) {
     /* The index corresponding to [x,y] in for a row-wise flattened 2D variable*/
     return y + x*w;
   } 
 
   bool compute () {
-    const unsigned w = worker_width;
-    const unsigned pw = worker_width + 2;
+    const std::size_t w = worker_width;
+    const std::size_t pw = worker_width + 2;
     float e_center, r_center;
 
     for (std::size_t x = 1; x < worker_height + 1; ++x) {
