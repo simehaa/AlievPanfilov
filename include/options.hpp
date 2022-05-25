@@ -26,14 +26,16 @@ struct Options {
 	std::size_t num_iterations;
 	std::size_t tiles_per_ipu = 0;
 	std::size_t num_tiles_available = 0;
-	std::vector<std::size_t> splits = {0,0,0};
+	std::vector<std::size_t> tile_splits = {0,0,0};
+	std::vector<std::size_t> ipu_splits = {1,1,1};
+	std::vector<std::size_t> worker_splits = {3,2,1}; // 6 workers
 	std::vector<std::size_t> smallest_slice = {
-		std::numeric_limits<size_t>::max(),1,1
+		std::numeric_limits<std::size_t>::max(),1,1
 	};
 	std::vector<std::size_t> largest_slice = {0,0,0};
 	double wall_time;
-	double total_memory_avail_MB;
 	bool cpu = false;
+	bool hierarchical_partitioning = false;
 };
 
 Options parse_options(int argc, char** argv);

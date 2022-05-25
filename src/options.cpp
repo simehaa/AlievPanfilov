@@ -80,6 +80,11 @@ Options parse_options(int argc, char** argv) {
 		"cpu-test",
 		po::bool_switch(&options.cpu)->default_value(false),
 		"Whether to test (MSE of meshes) against a slow CPU code."
+	)
+	(
+		"hierarchical-partitioning",
+		po::bool_switch(&options.hierarchical_partitioning)->default_value(false),
+		"Whether to partition the mesh in 2D amongst the IPUs (top-level partitioning)."
 	);
 
 	po::variables_map vm;
@@ -95,6 +100,26 @@ Options parse_options(int argc, char** argv) {
 	options.dtk = options.dt*options.k; // function of dt and k
 	options.lambda = options.delta*options.dt/(options.dx * options.dx); // function of delta, dx, dt
 	options.gamma = 1 - 6*options.lambda; // function of delta, dx, dt
+
+	if (options.hierarchical_partitioning) {
+		if (options.num_ipus == 1) {
+			options.ipu_splits = {1, 1, 1};
+		} else if (options.num_ipus == 2) {
+			options.ipu_splits = {1, 1, 2};
+		} else if (options.num_ipus == 4) {
+			options.ipu_splits = {1, 2, 2};
+		} else if (options.num_ipus == 8) {
+			options.ipu_splits = {1, 2, 4};
+		} else if (options.num_ipus == 16) {
+			options.ipu_splits = {1, 4, 4};
+		} else if (options.num_ipus == 32) {
+			options.ipu_splits = {1, 4, 8};
+		} else if (options.num_ipus == 64) {
+			options.ipu_splits = {1, 8, 8};
+		}
+	} else {
+		options.ipu_splits = {1, 1, options.num_ipus};
+	}
 
 	return options;
 }
