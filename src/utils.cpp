@@ -20,6 +20,11 @@ std::size_t volume(std::vector<std::size_t> shape) {
   return shape[0]*shape[1]*shape[2];
 }
 
+std::size_t surface_area(std::vector<std::size_t> shape) {
+  // return volume of shape vector (3D)
+  return 2*(shape[0]*shape[1] + shape[0]*shape[2] + shape[1]*shape[2]);
+}
+
 std::vector<std::size_t> work_division_3d(
   std::size_t height,
   std::size_t width,
@@ -202,26 +207,55 @@ void test_upper_dt(Options &options) {
     );
 }
 
-void print_results_and_options(Options &options) {
+void print_pde_problem(Options &options) {
+  double padded_mesh = (double) (options.height + 2) * (double) (options.width + 2) * (double) (options.depth + 2);
+  double minimum_MB = 4*3*padded_mesh*1e-6; // 3 tensors, 4 bytes per element, converted to MB
+
+  std::cout
+    << "3D Aliev-Panfilov Model\n"
+    << "-----------------------\n"
+    << "Full 3D mesh: " << options.height << "*" << options.width << "*" << options.depth << " elements\n"
+    << "Number of iterations: " << options.num_iterations << "\n"
+    << "Minimum memory usage (two copies of e, one copy of r): " << minimum_MB << " MB\n";
+}
+
+void print_data_exchange_volumes(Options &options) {
+  float one_ipus_mesh_height = options.height / options.ipu_splits[0];
+  float one_ipus_mesh_width = options.width / options.ipu_splits[1];
+  float one_ipus_mesh_depth = options.depth / options.ipu_splits[2];
+  float intra_ipu_communication_volume = 2*(
+    (options.tile_splits[0] - 1)*one_ipus_mesh_width*one_ipus_mesh_depth +
+    (options.tile_splits[1] - 1)*one_ipus_mesh_height*one_ipus_mesh_depth +
+    (options.tile_splits[2] - 1)*one_ipus_mesh_height*one_ipus_mesh_width
+  );
+  float inter_ipu_communication_volume = 2*(
+    (options.ipu_splits[0] - 1)*options.width*options.depth +
+    (options.ipu_splits[1] - 1)*options.height*options.depth +
+    (options.ipu_splits[2] - 1)*options.height*options.width
+  );
+
+  std::cout
+    << "Number of IPUs: " << options.num_ipus << "\n"
+    << "Number of tiles: " << options.num_tiles_available << "\n"
+    << "Mesh partitioning: " << options.partitions[0] << "*" << options.partitions[1] << "*" << options.partitions[2] << " partitions\n"
+    << "IPU partitioning: " << options.ipu_splits[0] << "*" << options.ipu_splits[1] << "*" << options.ipu_splits[2] << " partitions\n"
+    << "Tile partitions: " << options.tile_splits[0] << "*" << options.tile_splits[1] << "*" << options.tile_splits[2] << " partitions\n"
+    << "Inter-IPU communication volume: " << std::setprecision(5) << inter_ipu_communication_volume*4*1e-6 << " MB\n"
+    << "Intra-IPU communication volume: " << std::setprecision(5) << intra_ipu_communication_volume*4*1e-6 << " MB\n";
+}
+
+void print_results(Options &options) {
   // Calculate metrics
   double mesh_volume = (double) options.height * (double) options.width * (double) options.depth;
   double flops_per_element = 28.0;
   double flops = mesh_volume * (double) options.num_iterations * flops_per_element / options.wall_time;
   double tflops = flops*1e-12;
-  double padded_mesh = (double) (options.height + 2) * (double) (options.width + 2) * (double) (options.depth + 2);
-  double minimum_MB = (3*padded_mesh)*4e-6; // 3 tensors, 4 bytes per element, converted to MB
 
   std::cout 
-    << "3D Aliev-Panfilov model\n"
-    << "-----------------------\n"
-    << "No. IPUs = " << options.num_ipus << "\n"
-    << "No. tiles = " << options.num_tiles_available << "\n"
-    << "Total mesh = " << options.height << "*" << options.width << "*" << options.depth << " elements\n"
-    << "Partitions = " << options.tile_splits[0] << "*" << options.tile_splits[1] << "*" << options.tile_splits[2] << "\n"
-    << "Smallest tile partition = " << options.smallest_slice[0] << "*" << options.smallest_slice[1] << "*" << options.smallest_slice[2]  << " elements\n"
-    << "Largest tile partition = " << options.largest_slice[0] << "*" << options.largest_slice[1] << "*" << options.largest_slice[2]  << " elements\n"
-    << "No. iterations = " << options.num_iterations << "\n"
-    << "Tensors' on-tile memory usage = " << minimum_MB << " MB\n"
-    << "Wall Time = " << std::setprecision(5) << options.wall_time << " s\n"
-    << "Computational throughput = " << std::setprecision(5) << tflops << " TFLOPS\n\n";
+    << "Smallest tile partition: " << options.smallest_slice[0] << "*" << options.smallest_slice[1] << "*" << options.smallest_slice[2]  << " elements\n"
+    << "Smallest tile communication volume: " << 4*surface_area(options.smallest_slice) << " Bytes\n"
+    << "Largest tile partition: " << options.largest_slice[0] << "*" << options.largest_slice[1] << "*" << options.largest_slice[2]  << " elements\n"
+    << "Largest tile communication volume: " << 4*surface_area(options.largest_slice) << " Bytes\n"
+    << "Wall Time: " << std::setprecision(5) << options.wall_time << " s\n"
+    << "Computational throughput: " << std::setprecision(5) << tflops << " TFLOPS\n\n";
 }
