@@ -12,6 +12,7 @@ int main (int argc, char** argv) {
   try {
     // Get options from command line arguments
     auto options = parse_options(argc, argv);
+    print_pde_problem(options);
     test_upper_dt(options);
 
     // Attach to IPU device
@@ -22,18 +23,17 @@ int main (int argc, char** argv) {
 
     // Brute-force find optimal tile partition
     // (minimized tile-to-tile communication volume)
-    options.tile_splits = work_division_3d(
-      options.height / options.ipu_splits[0],
-      options.width / options.ipu_splits[1],
-      options.depth / options.ipu_splits[2],
-      options.tiles_per_ipu
+    options.partitions = work_division_3d(
+      options.height,
+      options.width,
+      options.depth,
+      options.num_tiles_available
     );
 
-    std::cout
-      << "IPUs: " << options.num_ipus << "\n"
-      << "Tiles per IPU: " << options.tiles_per_ipu << "\n"
-      << "IPU partitions: [" << options.ipu_splits[0] << "," << options.ipu_splits[1] << "," << options.ipu_splits[2] << "]\n"
-      << "Tile partitions: [" << options.tile_splits[0] << "," << options.tile_splits[1] << "," << options.tile_splits[2] << "]\n";
+    // Now that tile_splits is determined, 
+    // print inter- and intra- exchange volumes
+    // and number of partitions across IPUs and tiles
+    print_data_exchange_volumes(options);
 
     // Initialize meshes
     std::size_t h = options.height;
@@ -82,7 +82,7 @@ int main (int argc, char** argv) {
     // Report
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start);
     options.wall_time = 1e-9*diff.count();
-    print_results_and_options(options);
+    print_results(options);
 
     // End of try block
   } catch (const std::exception &e) {

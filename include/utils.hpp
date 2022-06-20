@@ -4,17 +4,20 @@
 #include <iomanip>
 #include "options.hpp"
 
-std::size_t index(std::size_t x, std::size_t y, std::size_t z, std::size_t width, std::size_t depth);
-std::size_t block_low(std::size_t id, std::size_t p, std::size_t n);
-std::size_t block_high(std::size_t id, std::size_t p, std::size_t n);
-std::size_t volume(std::vector<std::size_t> shape);
+std::size_t index(std::size_t, std::size_t, std::size_t, std::size_t, std::size_t);
+std::size_t block_low(std::size_t, std::size_t, std::size_t);
+std::size_t block_high(std::size_t, std::size_t, std::size_t);
+std::size_t volume(std::vector<std::size_t>);
+std::size_t surface_area(std::vector<std::size_t>);
 std::vector<std::size_t> work_division_3d(std::size_t, std::size_t, std::size_t, std::size_t);
-void test_upper_dt(Options &options);
+void test_upper_dt(Options&);
 void test_against_cpu(
-  std::vector<float> initial_e, 
-  std::vector<float> initial_r, 
-  const std::vector<float> ipu_e, 
-  const std::vector<float> ipu_r, 
-  Options &options
+  std::vector<float>, 
+  std::vector<float>, 
+  const std::vector<float>, 
+  const std::vector<float>, 
+  Options&
 );
-void print_results_and_options(Options &options);
+void print_pde_problem(Options&);
+void print_data_exchange_volumes(Options&);
+void print_results(Options&);
