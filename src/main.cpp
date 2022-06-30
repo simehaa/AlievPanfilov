@@ -29,6 +29,9 @@ int main (int argc, char** argv) {
       options.depth,
       options.num_tiles_available
     );
+    options.tile_splits[0] = options.partitions[0]/options.ipu_splits[0];
+    options.tile_splits[1] = options.partitions[1]/options.ipu_splits[1];
+    options.tile_splits[2] = options.partitions[2]/options.ipu_splits[2];
 
     // Now that tile_splits is determined, 
     // print inter- and intra- exchange volumes

@@ -38,26 +38,13 @@ poplar::ComputeSet create_compute_set(
         std::size_t ipu_id = index(ipu_x, ipu_y, ipu_z, options.ipu_splits[1], options.ipu_splits[2]);
         std::size_t ipu_x_low = block_low(ipu_x, options.ipu_splits[0], options.height) + 0;
         std::size_t ipu_y_low = block_low(ipu_y, options.ipu_splits[1], options.width) + 0;
-        std::size_t ipu_z_low = block_low(ipu_z, options.ipu_splits[2], options.depth) + 0; // 0, 2
+        std::size_t ipu_z_low = block_low(ipu_z, options.ipu_splits[2], options.depth) + 0;
         std::size_t ipu_x_high = block_high(ipu_x, options.ipu_splits[0], options.height) + 2;
         std::size_t ipu_y_high = block_high(ipu_y, options.ipu_splits[1], options.width) + 2;
-        std::size_t ipu_z_high = block_high(ipu_z, options.ipu_splits[2], options.depth) + 2; // 2, 4
+        std::size_t ipu_z_high = block_high(ipu_z, options.ipu_splits[2], options.depth) + 2;
         std::size_t ipu_height = ipu_x_high - ipu_x_low;
         std::size_t ipu_width = ipu_y_high - ipu_y_low;
         std::size_t ipu_depth = ipu_z_high - ipu_z_low;
-
-        auto e_in_ipu_slice = e_in.slice(
-          {ipu_x_low, ipu_y_low, ipu_z_low}, 
-          {ipu_x_high, ipu_y_high, ipu_z_high}
-        );
-        auto e_out_ipu_slice = e_out.slice(
-          {ipu_x_low, ipu_y_low, ipu_z_low}, 
-          {ipu_x_high, ipu_y_high, ipu_z_high}
-        );
-        auto r_ipu_slice = r.slice(
-          {ipu_x_low, ipu_y_low, ipu_z_low}, 
-          {ipu_x_high, ipu_y_high, ipu_z_high}
-        );
 
         // Work division per IPU (amongst tiles)
         for (std::size_t tile_x = 0; tile_x < options.tile_splits[0]; ++tile_x) {
@@ -66,12 +53,12 @@ poplar::ComputeSet create_compute_set(
 
               // Find indices and side lengths for this tile's mesh
               std::size_t tile_id = index(tile_x, tile_y, tile_z, options.tile_splits[1], options.tile_splits[2]) + ipu_id*options.tiles_per_ipu;
-              std::size_t tile_x_low = block_low(tile_x, options.tile_splits[0], ipu_height-2) + 1;
-              std::size_t tile_y_low = block_low(tile_y, options.tile_splits[1], ipu_width-2) + 1;
-              std::size_t tile_z_low = block_low(tile_z, options.tile_splits[2], ipu_depth-2) + 1;
-              std::size_t tile_x_high = block_high(tile_x, options.tile_splits[0], ipu_height-2) + 1;
-              std::size_t tile_y_high = block_high(tile_y, options.tile_splits[1], ipu_width-2) + 1;
-              std::size_t tile_z_high = block_high(tile_z, options.tile_splits[2], ipu_depth-2) + 1;
+              std::size_t tile_x_low = ipu_x_low + block_low(tile_x, options.tile_splits[0], ipu_height-2) + 1;
+              std::size_t tile_y_low = ipu_y_low + block_low(tile_y, options.tile_splits[1], ipu_width-2) + 1;
+              std::size_t tile_z_low = ipu_z_low + block_low(tile_z, options.tile_splits[2], ipu_depth-2) + 1;
+              std::size_t tile_x_high = ipu_x_low + block_high(tile_x, options.tile_splits[0], ipu_height-2) + 1;
+              std::size_t tile_y_high = ipu_y_low + block_high(tile_y, options.tile_splits[1], ipu_width-2) + 1;
+              std::size_t tile_z_high = ipu_z_low + block_high(tile_z, options.tile_splits[2], ipu_depth-2) + 1;
               std::size_t tile_height = tile_x_high - tile_x_low;
               std::size_t tile_width = tile_y_high - tile_y_low;
               std::size_t tile_depth = tile_z_high - tile_z_low;
@@ -100,19 +87,19 @@ poplar::ComputeSet create_compute_set(
                     std::size_t worker_depth = worker_z_high - worker_z_low;
 
                     // Vertex' r slice (offset of +1 because of the padding)
-                    auto r_slice = r_ipu_slice.slice(
+                    auto r_slice = r.slice(
                       {worker_x_low, worker_y_low, worker_z_low},
                       {worker_x_high, worker_y_high, worker_z_high}
                     );
 
                     // Vertex' e_out slice (offset of +1 because of the padding)
-                    auto e_out_slice = e_out_ipu_slice.slice(
+                    auto e_out_slice = e_out.slice(
                       {worker_x_low, worker_y_low, worker_z_low},
                       {worker_x_high, worker_y_high, worker_z_high}
                     );
 
                     // Vertex' e_in slice (notice padding wrt to both e_out and r)
-                    auto e_in_slice = e_in_ipu_slice.slice(
+                    auto e_in_slice = e_in.slice(
                       {worker_x_low-1, worker_y_low-1, worker_z_low-1},
                       {worker_x_high+1, worker_y_high+1, worker_z_high+1}
                     );
@@ -215,17 +202,9 @@ std::vector<poplar::program::Program> create_ipu_programs(
         std::size_t ipu_x_high = block_high(ipu_x, options.ipu_splits[0], options.height) + offset_bottom;
         std::size_t ipu_y_high = block_high(ipu_y, options.ipu_splits[1], options.width) + offset_right;
         std::size_t ipu_z_high = block_high(ipu_z, options.ipu_splits[2], options.depth) + offset_back;
-
-        // +2 in high indices for e, because of padding
-        auto ipu_slice = e_a.slice(
-          {ipu_x_low, ipu_y_low, ipu_z_low}, 
-          {ipu_x_high, ipu_y_high, ipu_z_high}
-        );
-
-        // std::cout << "IPU " << ipu_id << " receives "
-        //    << "[" << ipu_x_low << "," << ipu_x_high << "]" << "x"
-        //    << "[" << ipu_y_low << "," << ipu_y_high << "]" << "x"
-        //    << "[" << ipu_z_low << "," << ipu_z_high << "]" << "\n";
+        std::size_t ipu_height = ipu_x_high - ipu_x_low;
+        std::size_t ipu_width = ipu_y_high - ipu_y_low;
+        std::size_t ipu_depth = ipu_z_high - ipu_z_low;        
 
         // Fine-level partitioning amongst tiles
         for (std::size_t tile_x = 0; tile_x < options.tile_splits[0]; ++tile_x) {
@@ -241,14 +220,14 @@ std::vector<poplar::program::Program> create_ipu_programs(
               std::size_t inter_offset_bottom = (tile_x == options.tile_splits[0] - 1) ? 2 : 1;
               std::size_t inter_offset_right = (tile_y == options.tile_splits[1] - 1) ? 2 : 1;
               std::size_t inter_offset_back = (tile_z == options.tile_splits[2] - 1) ? 2 : 1;
-              std::size_t x_low = block_low(tile_x, options.tile_splits[0], ipu_slice.shape()[0] - 2) + inter_offset_top;
-              std::size_t y_low = block_low(tile_y, options.tile_splits[1], ipu_slice.shape()[1] - 2) + inter_offset_left;
-              std::size_t z_low = block_low(tile_z, options.tile_splits[2], ipu_slice.shape()[2] - 2) + inter_offset_front;
-              std::size_t x_high = block_high(tile_x, options.tile_splits[0], ipu_slice.shape()[0] - 2) + inter_offset_bottom;
-              std::size_t y_high = block_high(tile_y, options.tile_splits[1], ipu_slice.shape()[1] - 2) + inter_offset_right;
-              std::size_t z_high = block_high(tile_z, options.tile_splits[2], ipu_slice.shape()[2] - 2) + inter_offset_back;
+              std::size_t x_low = ipu_x_low + block_low(tile_x, options.tile_splits[0], ipu_height-2) + inter_offset_top;
+              std::size_t y_low = ipu_y_low + block_low(tile_y, options.tile_splits[1], ipu_width-2) + inter_offset_left;
+              std::size_t z_low = ipu_z_low + block_low(tile_z, options.tile_splits[2], ipu_depth-2) + inter_offset_front;
+              std::size_t x_high = ipu_x_low + block_high(tile_x, options.tile_splits[0], ipu_height-2) + inter_offset_bottom;
+              std::size_t y_high = ipu_y_low + block_high(tile_y, options.tile_splits[1], ipu_width-2) + inter_offset_right;
+              std::size_t z_high = ipu_z_low + block_high(tile_z, options.tile_splits[2], ipu_depth-2) + inter_offset_back;
 
-              auto tile_slice = ipu_slice.slice({x_low, y_low, z_low}, {x_high, y_high, z_high});
+              auto tile_slice = e_a.slice({x_low, y_low, z_low}, {x_high, y_high, z_high});
               graph.setTileMapping(tile_slice, tile_id);
             }
           }

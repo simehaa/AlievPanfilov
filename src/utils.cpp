@@ -223,23 +223,28 @@ void print_data_exchange_volumes(Options &options) {
   float one_ipus_mesh_height = options.height / options.ipu_splits[0];
   float one_ipus_mesh_width = options.width / options.ipu_splits[1];
   float one_ipus_mesh_depth = options.depth / options.ipu_splits[2];
-  float intra_ipu_communication_volume = 2*(
-    (options.tile_splits[0] - 1)*one_ipus_mesh_width*one_ipus_mesh_depth +
-    (options.tile_splits[1] - 1)*one_ipus_mesh_height*one_ipus_mesh_depth +
-    (options.tile_splits[2] - 1)*one_ipus_mesh_height*one_ipus_mesh_width
+  float total_communication_volume = 2*(
+    (options.partitions[0] - 1)*options.width*options.depth +
+    (options.partitions[1] - 1)*options.height*options.depth +
+    (options.partitions[2] - 1)*options.height*options.width
   );
+  float ipu_height = options.height/options.ipu_splits[0];
+  float ipu_width = options.width/options.ipu_splits[1];
+  float ipu_depth = options.depth/options.ipu_splits[2];
   float inter_ipu_communication_volume = 2*(
-    (options.ipu_splits[0] - 1)*options.width*options.depth +
-    (options.ipu_splits[1] - 1)*options.height*options.depth +
-    (options.ipu_splits[2] - 1)*options.height*options.width
+    (options.ipu_splits[0] - 1)*ipu_width*ipu_depth +
+    (options.ipu_splits[1] - 1)*ipu_height*ipu_depth +
+    (options.ipu_splits[2] - 1)*ipu_height*ipu_width
   );
+  float intra_ipu_communication_volume = total_communication_volume - inter_ipu_communication_volume;
 
   std::cout
     << "Number of IPUs: " << options.num_ipus << "\n"
     << "Number of tiles: " << options.num_tiles_available << "\n"
     << "Mesh partitioning: " << options.partitions[0] << "*" << options.partitions[1] << "*" << options.partitions[2] << " partitions\n"
     << "IPU partitioning: " << options.ipu_splits[0] << "*" << options.ipu_splits[1] << "*" << options.ipu_splits[2] << " partitions\n"
-    << "Tile partitions: " << options.tile_splits[0] << "*" << options.tile_splits[1] << "*" << options.tile_splits[2] << " partitions\n"
+    << "Tile partitioning: " << options.tile_splits[0] << "*" << options.tile_splits[1] << "*" << options.tile_splits[2] << " partitions\n"
+    << "Total communication volume: " << std::setprecision(5) << total_communication_volume*4*1e-6 << " MB\n"
     << "Inter-IPU communication volume: " << std::setprecision(5) << inter_ipu_communication_volume*4*1e-6 << " MB\n"
     << "Intra-IPU communication volume: " << std::setprecision(5) << intra_ipu_communication_volume*4*1e-6 << " MB\n";
 }
