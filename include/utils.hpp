@@ -10,6 +10,7 @@ std::size_t block_high(std::size_t, std::size_t, std::size_t);
 std::size_t volume(std::vector<std::size_t>);
 std::size_t surface_area(std::vector<std::size_t>);
 std::vector<std::size_t> work_division_3d(std::size_t, std::size_t, std::size_t, std::size_t);
+void hierarchical_tile_mapping(Options&);
 void test_upper_dt(Options&);
 void test_against_cpu(
   std::vector<float>, 

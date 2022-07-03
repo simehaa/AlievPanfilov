@@ -30,102 +30,89 @@ poplar::ComputeSet create_compute_set(
   auto compute_set = graph.addComputeSet(compute_set_name);
 
   // Hierarchical loop: among IPUs -> among tiles -> among worker contexts
-  for (std::size_t ipu_x = 0; ipu_x < options.ipu_splits[0]; ++ipu_x) {
-    for (std::size_t ipu_y = 0; ipu_y < options.ipu_splits[1]; ++ipu_y) {
-      for (std::size_t ipu_z = 0; ipu_z < options.ipu_splits[2]; ++ipu_z) {
+  for (std::size_t z = 0; z < options.partitions[2]; ++z) {
+    for (std::size_t y = 0; y < options.partitions[1]; ++y) {
+      for (std::size_t x = 0; x < options.partitions[0]; ++x) {
+        std::size_t offset_top = 1;
+        std::size_t offset_left = 1;
+        std::size_t offset_front = 1;
+        std::size_t offset_bottom = 1;
+        std::size_t offset_right = 1;
+        std::size_t offset_back = 1;
+        std::size_t x_low = block_low(x, options.partitions[0], options.height) + offset_top;
+        std::size_t y_low = block_low(y, options.partitions[1], options.width) + offset_left;
+        std::size_t z_low = block_low(z, options.partitions[2], options.depth) + offset_front;
+        std::size_t x_high = block_high(x, options.partitions[0], options.height) + offset_bottom;
+        std::size_t y_high = block_high(y, options.partitions[1], options.width) + offset_right;
+        std::size_t z_high = block_high(z, options.partitions[2], options.depth) + offset_back;
+        std::size_t tile_height = x_high - x_low;
+        std::size_t tile_width = y_high - y_low;
+        std::size_t tile_depth = z_high - z_low;
+        std::size_t tile_id = options.mapping[index(x, y, z, options.partitions[0], options.partitions[1])];
 
-        // Find top-level partition
-        std::size_t ipu_id = index(ipu_x, ipu_y, ipu_z, options.ipu_splits[1], options.ipu_splits[2]);
-        std::size_t ipu_x_low = block_low(ipu_x, options.ipu_splits[0], options.height) + 0;
-        std::size_t ipu_y_low = block_low(ipu_y, options.ipu_splits[1], options.width) + 0;
-        std::size_t ipu_z_low = block_low(ipu_z, options.ipu_splits[2], options.depth) + 0;
-        std::size_t ipu_x_high = block_high(ipu_x, options.ipu_splits[0], options.height) + 2;
-        std::size_t ipu_y_high = block_high(ipu_y, options.ipu_splits[1], options.width) + 2;
-        std::size_t ipu_z_high = block_high(ipu_z, options.ipu_splits[2], options.depth) + 2;
-        std::size_t ipu_height = ipu_x_high - ipu_x_low;
-        std::size_t ipu_width = ipu_y_high - ipu_y_low;
-        std::size_t ipu_depth = ipu_z_high - ipu_z_low;
+        // Record some metrics
+        std::vector<std::size_t> shape = {tile_height, tile_width, tile_depth};
+        if (volume(shape) < volume(options.smallest_slice))
+          options.smallest_slice = shape;
+        if (volume(shape) > volume(options.largest_slice)) 
+          options.largest_slice = shape;
 
-        // Work division per IPU (amongst tiles)
-        for (std::size_t tile_x = 0; tile_x < options.tile_splits[0]; ++tile_x) {
-          for (std::size_t tile_y = 0; tile_y < options.tile_splits[1]; ++tile_y) {
-            for (std::size_t tile_z = 0; tile_z < options.tile_splits[2]; ++tile_z) {
+        // Work division per tile (amongst threads)
+        for (std::size_t worker_z = 0; worker_z < options.worker_splits[2]; ++worker_z) {
+          for (std::size_t worker_y = 0; worker_y < options.worker_splits[1]; ++worker_y) {
+            for (std::size_t worker_x = 0; worker_x < options.worker_splits[0]; ++worker_x) {
+              
+              // Dividing tile work among workers
+              std::size_t worker_x_low = x_low + block_low(worker_x, options.worker_splits[0], tile_height);
+              std::size_t worker_y_low = y_low + block_low(worker_y, options.worker_splits[1], tile_width);
+              std::size_t worker_z_low = z_low + block_low(worker_z, options.worker_splits[2], tile_depth);
+              std::size_t worker_x_high = x_low + block_high(worker_x, options.worker_splits[0], tile_height);
+              std::size_t worker_y_high = y_low + block_high(worker_y, options.worker_splits[1], tile_width);
+              std::size_t worker_z_high = z_low + block_high(worker_z, options.worker_splits[2], tile_depth);
+              std::size_t worker_height = worker_x_high - worker_x_low;
+              std::size_t worker_width = worker_y_high - worker_y_low;
+              std::size_t worker_depth = worker_z_high - worker_z_low;
 
-              // Find indices and side lengths for this tile's mesh
-              std::size_t tile_id = index(tile_x, tile_y, tile_z, options.tile_splits[1], options.tile_splits[2]) + ipu_id*options.tiles_per_ipu;
-              std::size_t tile_x_low = ipu_x_low + block_low(tile_x, options.tile_splits[0], ipu_height-2) + 1;
-              std::size_t tile_y_low = ipu_y_low + block_low(tile_y, options.tile_splits[1], ipu_width-2) + 1;
-              std::size_t tile_z_low = ipu_z_low + block_low(tile_z, options.tile_splits[2], ipu_depth-2) + 1;
-              std::size_t tile_x_high = ipu_x_low + block_high(tile_x, options.tile_splits[0], ipu_height-2) + 1;
-              std::size_t tile_y_high = ipu_y_low + block_high(tile_y, options.tile_splits[1], ipu_width-2) + 1;
-              std::size_t tile_z_high = ipu_z_low + block_high(tile_z, options.tile_splits[2], ipu_depth-2) + 1;
-              std::size_t tile_height = tile_x_high - tile_x_low;
-              std::size_t tile_width = tile_y_high - tile_y_low;
-              std::size_t tile_depth = tile_z_high - tile_z_low;
+              // Vertex' r slice (offset of +1 because of the padding)
+              auto r_slice = r.slice(
+                {worker_x_low, worker_y_low, worker_z_low},
+                {worker_x_high, worker_y_high, worker_z_high}
+              );
 
-              // Record some metrics
-              std::vector<std::size_t> shape = {tile_height, tile_width, tile_depth};
-              if (volume(shape) < volume(options.smallest_slice))
-                options.smallest_slice = shape;
-              if (volume(shape) > volume(options.largest_slice)) 
-                options.largest_slice = shape;
+              // Vertex' e_out slice (offset of +1 because of the padding)
+              auto e_out_slice = e_out.slice(
+                {worker_x_low, worker_y_low, worker_z_low},
+                {worker_x_high, worker_y_high, worker_z_high}
+              );
 
-              // Work division per tile (amongst threads)
-              for (std::size_t worker_x = 0; worker_x < options.worker_splits[0]; ++worker_x) {
-                for (std::size_t worker_y = 0; worker_y < options.worker_splits[1]; ++worker_y) {
-                  for (std::size_t worker_z = 0; worker_z < options.worker_splits[2]; ++worker_z) {
-                    
-                    // Dividing tile work among workers
-                    std::size_t worker_x_low = tile_x_low + block_low(worker_x, options.worker_splits[0], tile_height);
-                    std::size_t worker_y_low = tile_y_low + block_low(worker_y, options.worker_splits[1], tile_width);
-                    std::size_t worker_z_low = tile_z_low + block_low(worker_z, options.worker_splits[2], tile_depth);
-                    std::size_t worker_x_high = tile_x_low + block_high(worker_x, options.worker_splits[0], tile_height);
-                    std::size_t worker_y_high = tile_y_low + block_high(worker_y, options.worker_splits[1], tile_width);
-                    std::size_t worker_z_high = tile_z_low + block_high(worker_z, options.worker_splits[2], tile_depth);
-                    std::size_t worker_height = worker_x_high - worker_x_low;
-                    std::size_t worker_width = worker_y_high - worker_y_low;
-                    std::size_t worker_depth = worker_z_high - worker_z_low;
+              // Vertex' e_in slice (notice padding wrt to both e_out and r)
+              auto e_in_slice = e_in.slice(
+                {worker_x_low-1, worker_y_low-1, worker_z_low-1},
+                {worker_x_high+1, worker_y_high+1, worker_z_high+1}
+              );
 
-                    // Vertex' r slice (offset of +1 because of the padding)
-                    auto r_slice = r.slice(
-                      {worker_x_low, worker_y_low, worker_z_low},
-                      {worker_x_high, worker_y_high, worker_z_high}
-                    );
-
-                    // Vertex' e_out slice (offset of +1 because of the padding)
-                    auto e_out_slice = e_out.slice(
-                      {worker_x_low, worker_y_low, worker_z_low},
-                      {worker_x_high, worker_y_high, worker_z_high}
-                    );
-
-                    // Vertex' e_in slice (notice padding wrt to both e_out and r)
-                    auto e_in_slice = e_in.slice(
-                      {worker_x_low-1, worker_y_low-1, worker_z_low-1},
-                      {worker_x_high+1, worker_y_high+1, worker_z_high+1}
-                    );
-
-                    // Assign vertex to graph 
-                    // (six vertices per tile, which will be solved by six different threads)
-                    auto v = graph.addVertex(compute_set, "AlievPanfilovVertex");
-                    graph.connect(v["e_in"], e_in_slice.flatten(0,2));
-                    graph.connect(v["e_out"], e_out_slice.flatten(0,2));
-                    graph.connect(v["r"], r_slice.flatten(0,2));
-                    graph.setInitialValue(v["worker_height"], worker_height);
-                    graph.setInitialValue(v["worker_width"], worker_width);
-                    graph.setInitialValue(v["worker_depth"], worker_depth);
-                    graph.setInitialValue(v["epsilon"], options.epsilon);
-                    graph.setInitialValue(v["my1"], options.my1);
-                    graph.setInitialValue(v["my2"], options.my2);
-                    graph.setInitialValue(v["dt"], options.dt);
-                    graph.setInitialValue(v["k"], options.k);
-                    graph.setInitialValue(v["a"], options.a);
-                    graph.setInitialValue(v["lambda"], options.lambda);
-                    graph.setInitialValue(v["gamma"], options.gamma);
-                    graph.setInitialValue(v["dtk"], options.dtk);
-                    graph.setInitialValue(v["b_plus_1"], options.b_plus_1);
-                    graph.setTileMapping(v, tile_id);
-                  }
-                }
+              // Assign vertex to graph 
+              // (six vertices per tile, which will be solved by six different threads)
+              auto v = graph.addVertex(compute_set, "AlievPanfilovVertex");
+              graph.connect(v["e_in"], e_in_slice.flatten(0,2));
+              graph.connect(v["e_out"], e_out_slice.flatten(0,2));
+              graph.connect(v["r"], r_slice.flatten(0,2));
+              graph.setInitialValue(v["worker_height"], worker_height);
+              graph.setInitialValue(v["worker_width"], worker_width);
+              graph.setInitialValue(v["worker_depth"], worker_depth);
+              graph.setInitialValue(v["epsilon"], options.epsilon);
+              graph.setInitialValue(v["my1"], options.my1);
+              graph.setInitialValue(v["my2"], options.my2);
+              graph.setInitialValue(v["dt"], options.dt);
+              graph.setInitialValue(v["k"], options.k);
+              graph.setInitialValue(v["a"], options.a);
+              graph.setInitialValue(v["lambda"], options.lambda);
+              graph.setInitialValue(v["gamma"], options.gamma);
+              graph.setInitialValue(v["dtk"], options.dtk);
+              graph.setInitialValue(v["b_plus_1"], options.b_plus_1);
+              graph.setTileMapping(v, tile_id);
+              if (tile_id > options.num_tiles_available) {
+                std::cout << "Error,. tile_id = " << tile_id << "\n";
               }
             }
           }
@@ -185,53 +172,28 @@ std::vector<poplar::program::Program> create_ipu_programs(
   auto e_b = graph.addVariable(poplar::FLOAT, {options.height + 2, options.width + 2, options.depth + 2}, "e_b");
   auto r = graph.addVariable(poplar::FLOAT, {options.height + 2, options.width + 2, options.depth + 2}, "r"); // padding for simplicity, not necessary
 
-  for (std::size_t ipu_x = 0; ipu_x < options.ipu_splits[0]; ++ipu_x) {
-    for (std::size_t ipu_y = 0; ipu_y < options.ipu_splits[1]; ++ipu_y) {
-      for (std::size_t ipu_z = 0; ipu_z < options.ipu_splits[2]; ++ipu_z) {
-
-        std::size_t ipu_id = index(ipu_x, ipu_y, ipu_z, options.ipu_splits[1], options.ipu_splits[2]);
-        std::size_t offset_top = (ipu_x == 0) ? 0 : 1;
-        std::size_t offset_left = (ipu_y == 0) ? 0 : 1;
-        std::size_t offset_front = (ipu_z == 0) ? 0 : 1;
-        std::size_t offset_bottom = (ipu_x == options.ipu_splits[0] - 1) ? 2 : 1;
-        std::size_t offset_right = (ipu_y == options.ipu_splits[1] - 1) ? 2 : 1;
-        std::size_t offset_back = (ipu_z == options.ipu_splits[2] - 1) ? 2 : 1;
-        std::size_t ipu_x_low = block_low(ipu_x, options.ipu_splits[0], options.height) + offset_top;
-        std::size_t ipu_y_low = block_low(ipu_y, options.ipu_splits[1], options.width) + offset_left;
-        std::size_t ipu_z_low = block_low(ipu_z, options.ipu_splits[2], options.depth) + offset_front;
-        std::size_t ipu_x_high = block_high(ipu_x, options.ipu_splits[0], options.height) + offset_bottom;
-        std::size_t ipu_y_high = block_high(ipu_y, options.ipu_splits[1], options.width) + offset_right;
-        std::size_t ipu_z_high = block_high(ipu_z, options.ipu_splits[2], options.depth) + offset_back;
-        std::size_t ipu_height = ipu_x_high - ipu_x_low;
-        std::size_t ipu_width = ipu_y_high - ipu_y_low;
-        std::size_t ipu_depth = ipu_z_high - ipu_z_low;        
-
-        // Fine-level partitioning amongst tiles
-        for (std::size_t tile_x = 0; tile_x < options.tile_splits[0]; ++tile_x) {
-          for (std::size_t tile_y = 0; tile_y < options.tile_splits[1]; ++tile_y) {
-            for (std::size_t tile_z = 0; tile_z < options.tile_splits[2]; ++tile_z) {
-              // Running index over all tiles
-              std::size_t tile_id = index(tile_x, tile_y, tile_z, options.tile_splits[1], options.tile_splits[2]) + ipu_id*options.tiles_per_ipu;
-              
-              // Evaluate offsets in all dimensions (avoid overlap at edges)
-              std::size_t inter_offset_top = (tile_x == 0) ? 0 : 1;
-              std::size_t inter_offset_left = (tile_y == 0) ? 0 : 1;
-              std::size_t inter_offset_front = (tile_z == 0) ? 0 : 1;
-              std::size_t inter_offset_bottom = (tile_x == options.tile_splits[0] - 1) ? 2 : 1;
-              std::size_t inter_offset_right = (tile_y == options.tile_splits[1] - 1) ? 2 : 1;
-              std::size_t inter_offset_back = (tile_z == options.tile_splits[2] - 1) ? 2 : 1;
-              std::size_t x_low = ipu_x_low + block_low(tile_x, options.tile_splits[0], ipu_height-2) + inter_offset_top;
-              std::size_t y_low = ipu_y_low + block_low(tile_y, options.tile_splits[1], ipu_width-2) + inter_offset_left;
-              std::size_t z_low = ipu_z_low + block_low(tile_z, options.tile_splits[2], ipu_depth-2) + inter_offset_front;
-              std::size_t x_high = ipu_x_low + block_high(tile_x, options.tile_splits[0], ipu_height-2) + inter_offset_bottom;
-              std::size_t y_high = ipu_y_low + block_high(tile_y, options.tile_splits[1], ipu_width-2) + inter_offset_right;
-              std::size_t z_high = ipu_z_low + block_high(tile_z, options.tile_splits[2], ipu_depth-2) + inter_offset_back;
-
-              auto tile_slice = e_a.slice({x_low, y_low, z_low}, {x_high, y_high, z_high});
-              graph.setTileMapping(tile_slice, tile_id);
-            }
-          }
+  int counter = 0;
+  for (std::size_t z = 0; z < options.partitions[2]; ++z) { 
+    for (std::size_t y = 0; y < options.partitions[1]; ++y) {
+      for (std::size_t x = 0; x < options.partitions[0]; ++x) {
+        std::size_t offset_top = (x == 0) ? 0 : 1;
+        std::size_t offset_left = (y == 0) ? 0 : 1;
+        std::size_t offset_front = (z == 0) ? 0 : 1;
+        std::size_t offset_bottom = (x == options.partitions[0] - 1) ? 2 : 1;
+        std::size_t offset_right = (y == options.partitions[1] - 1) ? 2 : 1;
+        std::size_t offset_back = (z == options.partitions[2] - 1) ? 2 : 1;
+        std::size_t x_low = block_low(x, options.partitions[0], options.height) + offset_top;
+        std::size_t y_low = block_low(y, options.partitions[1], options.width) + offset_left;
+        std::size_t z_low = block_low(z, options.partitions[2], options.depth) + offset_front;
+        std::size_t x_high = block_high(x, options.partitions[0], options.height) + offset_bottom;
+        std::size_t y_high = block_high(y, options.partitions[1], options.width) + offset_right;
+        std::size_t z_high = block_high(z, options.partitions[2], options.depth) + offset_back;
+        std::size_t tile_id = options.mapping[index(x, y, z, options.partitions[0], options.partitions[1])];
+        auto tile_slice = e_a.slice({x_low, y_low, z_low}, {x_high, y_high, z_high});
+        if (tile_id > options.num_tiles_available) {
+          std::cout << "Error,. tile_id = " << tile_id << "\n";
         }
+        graph.setTileMapping(tile_slice, tile_id);
       }
     }
   }

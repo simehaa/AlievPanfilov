@@ -1,8 +1,8 @@
 #include "utils.hpp"
 
-std::size_t index(std::size_t x, std::size_t y, std::size_t z, std::size_t width, std::size_t depth) {
+std::size_t index(std::size_t x, std::size_t y, std::size_t z, std::size_t height, std::size_t width) {
 	// 1D index corresponding to a flattened 3D variable. 
-  return (z) + (y)*(depth) + (x)*(width)*(depth);
+  return x + y*height + z*height*width;
 }
 
 std::size_t block_low(std::size_t id, std::size_t p, std::size_t n) {
@@ -71,6 +71,30 @@ std::vector<std::size_t> work_division_3d(
   return splits;
 }
 
+void hierarchical_tile_mapping(Options &options) {
+  for (std::size_t i = 0; i < options.num_tiles_available; ++i) {
+    options.mapping.push_back(0);
+  }
+  options.tile_splits[0] = options.partitions[0]/options.ipu_splits[0];
+  options.tile_splits[1] = options.partitions[1]/options.ipu_splits[1];
+  options.tile_splits[2] = options.partitions[2]/options.ipu_splits[2];
+  std::size_t tiles_per_xy_slice = options.tile_splits[0]*options.tile_splits[1]; 
+  for (std::size_t ipu_id = 0; ipu_id < options.num_ipus; ++ipu_id) {
+    std::size_t ipu_y = ipu_id % options.ipu_splits[1];
+    std::size_t ipu_z = ipu_id / options.ipu_splits[1];
+    std::size_t tile_offset_y = ipu_y*options.tile_splits[1];
+    std::size_t tile_offset_z = ipu_z*options.tile_splits[2];
+
+    for (std::size_t local_tile_id = 0; local_tile_id < options.tiles_per_ipu; ++local_tile_id) {
+      std::size_t global_tile_id = ipu_id*options.tiles_per_ipu + local_tile_id;
+      std::size_t global_tile_x = (local_tile_id % tiles_per_xy_slice) % options.tile_splits[0];
+      std::size_t global_tile_y = ((local_tile_id % tiles_per_xy_slice) / options.tile_splits[0]) + tile_offset_y;
+      std::size_t global_tile_z = (local_tile_id / tiles_per_xy_slice) + tile_offset_z;
+      options.mapping[index(global_tile_x, global_tile_y, global_tile_z, options.partitions[0], options.partitions[1])] = global_tile_id;
+    }
+  }
+}
+
 void test_against_cpu(
   std::vector<float> initial_e, 
   std::vector<float> initial_r, 
@@ -100,11 +124,11 @@ void test_against_cpu(
   float e_center, r_center;
 
   // Initialize cpu_e/cpu_r
-  for (std::size_t x = 1; x <= h; ++x) {
+  for (std::size_t z = 1; z <= d; ++z) {
     for (std::size_t y = 1; y <= w; ++y) {
-      for (std::size_t z = 1; z <= d; ++z) {
-        cpu_e[index(x,y,z,wp,dp)] = initial_e[index(x-1,y-1,z-1,w,d)];
-        cpu_r[index(x-1,y-1,z-1,w,d)] = initial_r[index(x-1,y-1,z-1,w,d)];
+      for (std::size_t x = 1; x <= h; ++x) {
+        cpu_e[index(x,y,z,hp,wp)] = initial_e[index(x-1,y-1,z-1,h,w)];
+        cpu_r[index(x-1,y-1,z-1,h,w)] = initial_r[index(x-1,y-1,z-1,h,w)];
       }
     }
   }
@@ -121,42 +145,42 @@ void test_against_cpu(
      */
     for (std::size_t x = 1; x <= h; ++x) {
       for (std::size_t y = 1; y <= w; ++y) {
-        cpu_e[index(x,y,0,wp,dp)] = cpu_e[index(x,y,2,wp,dp)]; // front surface
-        cpu_e[index(x,y,d+1,wp,dp)] = cpu_e[index(x,y,d-1,wp,dp)]; // back surface
+        cpu_e[index(x,y,0,hp,wp)] = cpu_e[index(x,y,2,hp,wp)]; // front surface
+        cpu_e[index(x,y,d+1,hp,wp)] = cpu_e[index(x,y,d-1,hp,wp)]; // back surface
       }
     }
     for (std::size_t x = 1; x <= h; ++x) {
       for (std::size_t z = 1; z <= d; ++z) {
-        cpu_e[index(x,0,z,wp,dp)] = cpu_e[index(x,2,z,wp,dp)]; // left surface
-        cpu_e[index(x,w+1,z,wp,dp)] = cpu_e[index(x,w-1,z,wp,dp)]; // right surface
+        cpu_e[index(x,0,z,hp,wp)] = cpu_e[index(x,2,z,hp,wp)]; // left surface
+        cpu_e[index(x,w+1,z,hp,wp)] = cpu_e[index(x,w-1,z,hp,wp)]; // right surface
       }
     }
     for (std::size_t y = 1; y <= w; ++y) {
       for (std::size_t z = 1; z <= d; ++z) {
-        cpu_e[index(0,y,z,wp,dp)] = cpu_e[index(2,y,z,wp,dp)]; // top surface
-        cpu_e[index(h+1,y,z,wp,dp)] = cpu_e[index(h-1,y,z,wp,dp)]; // bottom surface
+        cpu_e[index(0,y,z,hp,wp)] = cpu_e[index(2,y,z,hp,wp)]; // top surface
+        cpu_e[index(h+1,y,z,hp,wp)] = cpu_e[index(h-1,y,z,hp,wp)]; // bottom surface
       }
     }
 
     // PDE computation by sliding stencil over inner volume 
     // (inner volume of padded mesh corresponds to full volume of unpadded mesh)
-    for (std::size_t x = 1; x <= h; ++x) {
+    for (std::size_t z = 1; z <= d; ++z) {
       for (std::size_t y = 1; y <= w; ++y) {
-        for (std::size_t z = 1; z <= d; ++z) {
-          e_center = cpu_e[index(x,y,z,wp,dp)]; // reusable variable
-          r_center = cpu_r[index(x-1,y-1,z-1,w,d)];
+        for (std::size_t x = 1; x <= h; ++x) {
+          e_center = cpu_e[index(x,y,z,hp,wp)]; // reusable variable
+          r_center = cpu_r[index(x-1,y-1,z-1,h,w)];
 
           // New e_out_center
-          cpu_e_temp[index(x-1,y-1,z-1,w,d)] = options.lambda*(
-              cpu_e[index(x-1,y,z,wp,dp)] + cpu_e[index(x+1,y,z,wp,dp)] +
-              cpu_e[index(x,y-1,z,wp,dp)] + cpu_e[index(x,y+1,z,wp,dp)] +
-              cpu_e[index(x,y,z-1,wp,dp)] + cpu_e[index(x,y,z+1,wp,dp)]
+          cpu_e_temp[index(x-1,y-1,z-1,h,w)] = options.lambda*(
+              cpu_e[index(x-1,y,z,hp,wp)] + cpu_e[index(x+1,y,z,hp,wp)] +
+              cpu_e[index(x,y-1,z,hp,wp)] + cpu_e[index(x,y+1,z,hp,wp)] +
+              cpu_e[index(x,y,z-1,hp,wp)] + cpu_e[index(x,y,z+1,hp,wp)]
             ) + options.gamma*e_center
             - options.dtk*e_center*(e_center - options.a)*(e_center - 1) 
             - options.dt*e_center*r_center;
 
           // New r_center
-          cpu_r[index(x-1,y-1,z-1,w,d)] -= options.dt*(
+          cpu_r[index(x-1,y-1,z-1,h,w)] -= options.dt*(
             (options.epsilon + options.my1*r_center/(options.my2 + e_center))*
             (r_center + options.k*e_center*(e_center - options.b_plus_1))
           );
@@ -165,10 +189,10 @@ void test_against_cpu(
     }
 
     // re-update cpu_e from cpu_e_temp
-    for (std::size_t x = 1; x <= h; ++x) {
+    for (std::size_t z = 1; z <= d; ++z) {
       for (std::size_t y = 1; y <= w; ++y) {
-        for (std::size_t z = 1; z <= d; ++z) {
-          cpu_e[index(x,y,z,wp,dp)] = cpu_e_temp[index(x-1,y-1,z-1,w,d)];
+        for (std::size_t x = 1; x <= h; ++x) {
+          cpu_e[index(x,y,z,hp,wp)] = cpu_e_temp[index(x-1,y-1,z-1,h,w)];
         }
       }
     }
@@ -177,11 +201,11 @@ void test_against_cpu(
   // Evaluate MSE
   double e_error, r_error, e_MSE=0, r_MSE=0;
   double scale = 1.0 / (double) volume;
-  for (std::size_t x = 1; x < h + 1; ++x) {
+  for (std::size_t z = 1; z < d + 1; ++z) {
     for (std::size_t y = 1; y < w + 1; ++y) {
-      for (std::size_t z = 1; z < d + 1; ++z) {
-        e_error = ipu_e[index(x-1,y-1,z-1,w,d)] - cpu_e[index(x,y,z,wp,dp)];
-        r_error = ipu_r[index(x-1,y-1,z-1,w,d)] - cpu_r[index(x-1,y-1,z-1,w,d)];
+      for (std::size_t x = 1; x < h + 1; ++x) {
+        e_error = ipu_e[index(x-1,y-1,z-1,h,w)] - cpu_e[index(x,y,z,hp,wp)];
+        r_error = ipu_r[index(x-1,y-1,z-1,h,w)] - cpu_r[index(x-1,y-1,z-1,h,w)];
         e_MSE += scale*e_error*e_error;
         r_MSE += scale*r_error*r_error;
       }

@@ -29,10 +29,8 @@ int main (int argc, char** argv) {
       options.depth,
       options.num_tiles_available
     );
-    options.tile_splits[0] = options.partitions[0]/options.ipu_splits[0];
-    options.tile_splits[1] = options.partitions[1]/options.ipu_splits[1];
-    options.tile_splits[2] = options.partitions[2]/options.ipu_splits[2];
-
+    hierarchical_tile_mapping(options);
+          
     // Now that tile_splits is determined, 
     // print inter- and intra- exchange volumes
     // and number of partitions across IPUs and tiles
@@ -51,11 +49,11 @@ int main (int argc, char** argv) {
     // initial values
     // e: left half=0, right half=1
     // r: bottom half=0, top half=1
-    for (std::size_t x = 0; x < h; ++x) {
+    for (std::size_t z = 0; z < d; ++z) {
       for (std::size_t y = 0; y < w; ++y) {
-        for (std::size_t z = 0; z < d; ++z) {
-          initial_e[index(x,y,z,w,d)] = (y < w/2) ? 0.0 : 1.0;
-          initial_r[index(x,y,z,w,d)] = (x < h/2) ? 1.0 : 0.0;
+        for (std::size_t x = 0; x < h; ++x) {
+          initial_e[index(x,y,z,h,w)] = (y < w/2) ? 0.0 : 1.0;
+          initial_r[index(x,y,z,h,w)] = (x < h/2) ? 1.0 : 0.0;
         }
       }
     }
@@ -79,8 +77,9 @@ int main (int argc, char** argv) {
     auto stop = std::chrono::steady_clock::now();
     engine.run(2); // Stream of results
 
-    if (options.cpu)
+    if (options.cpu) {
       test_against_cpu(initial_e, initial_r, ipu_e, ipu_r, options);
+    }
 
     // Report
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start);
@@ -92,5 +91,5 @@ int main (int argc, char** argv) {
     std::cerr << "Exception: " << e.what() << "\n";
     return EXIT_FAILURE;
   }
-  return 0;
+  return EXIT_SUCCESS;
 }

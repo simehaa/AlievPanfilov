@@ -34,6 +34,7 @@ struct Options {
 		std::numeric_limits<std::size_t>::max(),1,1
 	};
 	std::vector<std::size_t> largest_slice = {0,0,0};
+	std::vector<std::size_t> mapping;
 	double wall_time;
 	bool cpu = false;
 	bool hierarchical_partitioning = false;
